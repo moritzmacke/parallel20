@@ -32,7 +32,7 @@ int arraysEqual(void *_a, void *_b, size_t len, size_t item_size, FP_COMPARE com
   return len == 0;
 }
 
-int validPartition(void *partedArray, void *originalArray, size_t length, size_t item_size, void *pivot, FP_COMPARE compare) {
+int validPartition(void *partedArray, void *originalArray, size_t length, size_t item_size, void *pivot, FP_COMPARE compare, size_t *pos) {
 		
     char *p = (char *) partedArray;
 
@@ -43,10 +43,18 @@ int validPartition(void *partedArray, void *originalArray, size_t length, size_t
 			}
 		}
 
+    size_t j=i;
+		for(; j < length; j++) {
+			if(compare((void *) &p[j*item_size], pivot) <= 0) {
+        if(pos != NULL) { *pos = j; }
+				return FALSE;
+			}
+		}
+
     qsort(partedArray, i, item_size, compare);
     qsort(&p[i*item_size], length-i, item_size, compare);
     qsort(originalArray, length, item_size, compare);
 	
-		return arraysEqual(partedArray, originalArray, length, item_size, compare, NULL);
+		return arraysEqual(partedArray, originalArray, length, item_size, compare, pos);
 
 }
