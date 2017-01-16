@@ -8,24 +8,37 @@
 #include <string.h>
 #include <sys/time.h>
 
-//#include <omp.h>
+
+#ifdef SEQUENTIAL
+#define cilk_spawn
+#define cilk_sync
+#else
+// cilkplus libraries
+#include <cilk/cilk.h>
+#include <cilk/cilk_api.h>
+#endif
 
 #include "generate.h"
 #include "sort.h"
 #include "validate.h"
 
-#define CHUNK_SIZE 2048
-
-
-
-
 struct _opts {
   uint32_t threads;
+  uint32_t cutoff;
   uint32_t seed;
   uint32_t pattern;
   uint32_t size;
+  int useDouble;
+  int longValidate;
 };
 
+double get_millis() {
+  struct timeval now;
+  gettimeofday(&now, NULL);  //error checking?
+  double t = now.tv_usec/1000.0;
+  t += now.tv_sec*1000;
+  return t;
+}
 
 int compare_ints(const void *a, const void *b) {
   const int *i_a = (const int *) a;
@@ -63,116 +76,70 @@ void print_vals(char *array, ITYPE *type, size_t length) {
   }
 }
 
-/*
-void quicksort(int a[], int n)
-{
-  int i, j;
-  int aa;
-
-  if (n<2) return;
-
-  //printf("which: %d %d\n",omp_get_thread_num(),omp_get_num_threads());
-
-  // partition
-  int pivot = a[0]; // choose an element non-randomly...
-  i = 0; j = n;
-  for (;;) {
-    while (++i<j&&a[i]<pivot); // has one advantage
-    while (a[--j]>pivot);
-    if (i>=j) break;
-    aa = a[i]; a[i] = a[j]; a[j] = aa;
-  }
-  // swap pivot
-  aa = a[0]; a[0] = a[j]; a[j] = aa;
-
-#pragma omp task untied if (n>1000)
-  quicksort(a,j);
-#pragma omp task untied if (n>1000)
-  quicksort(a+j+1,n-j-1);
-  //#pragma omp taskwait
-}
-*/
-
-//#define MICRO 1000000.0
-
 void print_usage(void);
 
 int get_options(int argc, char *argv[], struct _opts *options);
-
-double get_millis();
 
 int main(int argc, char *argv[])
 {
   int n;
   void *a, *copy;
 
-  int threads;
-
   ITYPE type;
-
-  unsigned seed;
 
   double start, stop;
 
-  struct _opts prog_options;
+  struct _opts opts;
 
-  prog_options.threads = 0;
-  prog_options.seed = 0;
-  prog_options.pattern = 0;
-  prog_options.size = 1;
+//  opts.threads = 0;
+  opts.seed = 0;
+  opts.pattern = 0;
+  opts.cutoff = 1000;
+  opts.size = 1;
+  opts.useDouble = FALSE;
+  opts.longValidate = FALSE;
 
-  if(!get_options(argc, argv, &prog_options)) {
+  if(!get_options(argc, argv, &opts)) {
     return 1;
   }
 
-  n = prog_options.size;
-  seed = prog_options.seed;
-  threads = set_num_threads(prog_options.threads);
+  n = opts.size;
 
-  printf("Number of threads %d, n=%d, seed=%d\n", threads, n, seed);
+//  printf("Number of threads %d, n=%d, seed=%d\n", threads, n, seed);
 
-
-  type.size = sizeof(int);
-  type.compare = compare_ints;
-  type.print = print_int;
-
-  a = generate_random(n, type.size, generate_uint, seed);
-//  a = generate_random(prog_options.size, sizeof(int), generate_item, prog_options.seed, prog_options.pattern);
+  if(opts.useDouble) {
+    type.size = sizeof(double);
+    type.compare = compare_doubles;
+    type.print = print_double;
+    a = generate_random(n, type.size, generate_double, opts.seed);
+  }
+  else {
+    type.size = sizeof(int);
+    type.compare = compare_ints;
+    type.print = print_int;
+    a = generate_random(n, type.size, generate_uint, opts.seed);
+  }
 
   copy = malloc(n*type.size);
   memcpy(copy, a, n*type.size);
 
   
-/*
+#ifndef SEQUENTIAL
+//  __cilkrts_set_param("nworkers","");
+  // check how many workers are available
+  int w = __cilkrts_get_nworkers();  
+  printf("Total number of workers: %d\n",w);
+#endif
 
-#pragma omp parallel
-  {
-#pragma omp single nowait
-    quicksort(a,n);
-#pragma omp taskwait
-  }
-  
-*/
-
+  printf("Length: %d (%s), Chunksize: %d\n", n, opts.useDouble? "doubles" : "ints", opts.cutoff);
   print_vals(a, &type, n);
 
-  start = get_millis();//omp_get_wtime();
+  start = get_millis();
 
+  parallelQuicksort(a, &type, n, opts.cutoff);
 
+  stop = get_millis();
 
-  //int *pivot = &a[n/2];
-  
-  void *buffer = malloc(n*type.size);
-  
-  
-  quicksort(a, &type, n, buffer);
-
-
-//  size_t split = test_partition(a, &type, n, (char *) buffer, pivot);
-
-  stop = get_millis();//omp_get_wtime();
-
-//  printf("Split at: %lu\n", split);
   print_vals(a, &type, n);
 
 
@@ -182,11 +149,38 @@ int main(int argc, char *argv[])
     printf("Result not sorted correctly.\n");
   }
 
-  printf("Sorting time %.2f ms\n",(stop-start));
+  printf("ParQSort time %.3f ms\n",stop-start);
 
-  
+  printf("Validating...\n");
+  if(opts.longValidate) {
+    start = get_millis();
+    qsort(copy, n, type.size, type.compare);
+    stop = get_millis();
 
-  free(buffer);
+    printf("SeqQSort time %.3f ms\n",stop-start);
+    print_vals(copy, &type, n);
+
+    size_t pos = 0;
+
+    if(!arraysEqual(a, copy, n, type.size, type.compare, &pos)) {
+      pos = pos/type.size;
+      printf("Sorting error! At position %lu \n", pos);
+//    printf("%u %u %u\n", pos > 0 ? a[pos-1] : -1, a[pos], a[pos+1]);
+//    printf("%u %u %u\n", pos > 0 ? c[pos-1] : -1, c[pos], c[pos+1]);
+    }
+    else {
+      printf("OK\n");
+    }
+  }
+  else {
+    if(!isSorted(a, &type, n)) {
+      printf("Sorting error! \n");
+    }
+    else {
+      printf("OK\n");
+    }
+  }
+
   free(a);
   free(copy);
 
@@ -194,7 +188,7 @@ int main(int argc, char *argv[])
 }
 
 void print_usage(void) {
-  printf(" -n SIZE -s SEED -d DISTRIBUTION -t NUM_THREADS\n");
+  printf(" -n SIZE -s SEED -c CUTOFF -d (=use doubles)\n");
 }
 
 int get_options(int argc, char *argv[], struct _opts *options) {
@@ -203,7 +197,7 @@ int get_options(int argc, char *argv[], struct _opts *options) {
   int c;
 
 
-  while ((c = getopt(argc, argv, "n:s:t:p:")) != -1) {
+  while ((c = getopt(argc, argv, "n:s:c:dv")) != -1) {
     switch (c) {
       case 'n':
         options->size = (uint32_t) strtol(optarg, NULL, 0);
@@ -211,11 +205,14 @@ int get_options(int argc, char *argv[], struct _opts *options) {
       case 's':
         options->seed = (uint32_t) strtol(optarg, NULL, 0);
         break;
-      case 't':
-        options->threads = (uint32_t) strtol(optarg, NULL, 0);
+      case 'c':
+        options->cutoff = (uint32_t) strtol(optarg, NULL, 0);
         break;
       case 'd':
-        options->pattern = (uint32_t) strtol(optarg, NULL, 0);
+        options->useDouble = TRUE;
+        break;
+      case 'v':
+        options->longValidate = TRUE;
         break;
       case '?':
         success = FALSE;
@@ -234,13 +231,5 @@ int get_options(int argc, char *argv[], struct _opts *options) {
 
   return success;
 
-}
-
-double get_millis() {
-  struct timeval now;
-  gettimeofday(&now,NULL);  //error checking?
-  double t = now.tv_usec/1000.0;
-  t += now.tv_sec*1000;
-  return t;
 }
 

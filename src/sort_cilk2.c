@@ -1,14 +1,6 @@
-/* Jesper Larsson Traff, TUW, November 2014, November 2016 */
-/* CilkPlus with gcc */
-
-// cilk_for not supported before gcc 5.0
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-
-#include <sys/time.h>
 
 #ifdef SEQUENTIAL
 #define cilk_spawn
@@ -20,8 +12,6 @@
 #endif
 
 #include "sort.h"
-#include "generate.h"
-#include "validate.h"
 
 
 typedef struct _chunk {
@@ -41,74 +31,8 @@ size_t umax(size_t a, size_t b) {
   return a >= b ? a : b;
 }
 
-double get_millis() {
-  struct timeval now;
-  gettimeofday(&now, NULL);  //error checking?
-  double t = now.tv_usec/1000.0;
-  t += now.tv_sec*1000;
-  return t;
-}
-
-int compare_ints(const void *a, const void *b) {
-  const int *i_a = (const int *) a;
-  const int *i_b = (const int *) b;
-  
-  return *i_a - *i_b;
-}
-
-int compare_doubles(const void *a, const void *b) {
-  const double *da = (const double *) a;
-  const double *db = (const double *) b;
-  
-  return (*da > *db) - (*da < *db);
-}
-
-void print_int(void *value, char *target, size_t maxChars) {
-  snprintf(target, maxChars, "%u", *((uint32_t *)value));
-}
-
-void print_double(void *value, char *target, size_t maxChars) {
-  snprintf(target, maxChars, "%f", *((double *)value));
-}
-
-void print_vals(char *array, ITYPE *type, size_t length) {
-  char buf[32];
-
-  if(length <= 100 && length > 0) {
-    int i;
-    for(i=0; (i+1)<length; i++) {
-      type->print(&array[i*type->size], buf, sizeof(buf));
-      printf("%s, ", buf);
-    }
-    type->print(&array[i*type->size], buf, sizeof(buf));
-    printf("%s\n", buf);
-  }
-}
 
 
-
-void print_chunks(CHUNK chunks[], int len) {
-  if(len <= 100 && len > 0) {
-    int i;
-    for(i=0; (i)<len; i++) {
-      printf("<%d: [%lu:%lu] LE: %lu pf: %lu split: %lu>, ", i, chunks[i].startIndex, chunks[i].startIndex + chunks[i].count_total, chunks[i].count_le, chunks[i].prefix_le, chunks[i].split);
-    }
-    printf("<%d: [%lu:%lu] LE: %lu pf: %lu split: %lu> \n", i, chunks[i].startIndex, chunks[i].startIndex + chunks[i].count_total, chunks[i].count_le, chunks[i].prefix_le, chunks[i].split);
-  }
-}
-
-int same(void *_a, void *_b, size_t len, size_t *pos) {
-  char *a = (char *) _a;
-  char *b = (char *) _b;
-
-  while(len > 0 && *a++ == *b++) {
-    len--;
-  }
-
-  *pos = a - (char *) _a;
-
-  return len == 0;
-}
 
 void swap(char *a, char *b, size_t size) {
 
@@ -130,6 +54,19 @@ void memswap(char *a, char *b, size_t length) {
 		*b++ = c;
 	}
 }
+
+
+//debug
+void print_chunks(CHUNK chunks[], int len) {
+  if(len <= 100 && len > 0) {
+    int i;
+    for(i=0; (i)<len; i++) {
+      printf("<%d: [%lu:%lu] LE: %lu pf: %lu split: %lu>, ", i, chunks[i].startIndex, chunks[i].startIndex + chunks[i].count_total, chunks[i].count_le, chunks[i].prefix_le, chunks[i].split);
+    }
+    printf("<%d: [%lu:%lu] LE: %lu pf: %lu split: %lu> \n", i, chunks[i].startIndex, chunks[i].startIndex + chunks[i].count_total, chunks[i].count_le, chunks[i].prefix_le, chunks[i].split);
+  }
+}
+
 
 size_t findSwapSrc(CHUNK chunks[], size_t lo, size_t range, size_t swapIndex) {
 	if(range > 1) {
@@ -505,110 +442,4 @@ void parallelQuicksort(void *array, ITYPE *type, size_t length, size_t chunksize
     qsort(array, length, type->size, type->compare);
   }
 
-}
-
-int main(int argc, char *argv[])
-{
-  int i, n;
-  void *a;
-  void *copy;
-
-  int seed;
-  int useDouble = FALSE;
-  ITYPE type;
-
-  double start, stop;
-
-  n = 1;
-  seed = (int) get_millis();
-  int cutoff = 5;
-  for (i=1; i<argc&&argv[i][0]=='-'; i++) {
-    if (argv[i][1]=='n') i++,sscanf(argv[i],"%d",&n);
-    if (argv[i][1]=='s') i++,sscanf(argv[i],"%d",&seed);
-    if (argv[i][1]=='c') i++,sscanf(argv[i],"%d",&cutoff);
-    if (argv[i][1]=='d') i++, useDouble=TRUE;
-  }
-
-//  a = (int*)malloc(n*sizeof(int));
-
-  if(useDouble) {
-    type.size = sizeof(double);
-    type.compare = compare_doubles;
-    type.print = print_double;
-    a = generate_random(n, type.size, generate_double, seed);
-  }
-  else {
-    type.size = sizeof(int);
-    type.compare = compare_ints;
-    type.print = print_int;
-    a = generate_random(n, type.size, generate_uint, seed);
-  }
-
- 
-  copy = malloc(n*type.size);
-  memcpy(copy, a, n*type.size);
-
-#ifndef SEQUENTIAL
-//  __cilkrts_set_param("nworkers","");
-  // check how many workers are available
-  int w = __cilkrts_get_nworkers();  
-  printf("Total number of workers: %d\n",w);
-#endif
-
-  printf("Length: %d (%s), Chunksize: %d\n", n, useDouble? "doubles" : "ints", cutoff);
-
-  print_vals(a, &type, n);
-
-//  int pivot = a[n/2];
-
-  start = get_millis();
-
-//  size_t split = parallelPartition(a, &type, n, cutoff, &pivot);
-  parallelQuicksort(a, &type, n, cutoff);
-  stop = get_millis();
-
-//  printf("Split point: %lu\n", divide);
-
-  printf("ParQSort time %.3f ms\n",stop-start);
-
-/*
-  printf("Split at %lu\n", split);
-  print_ints(a, n);
-
-  size_t pos;
-
-  if(validPartition(a, c, n, type.size, &pivot, type.compare, &pos)) {
-    printf("OK\n");
-  }
-  else {
-    printf("Partition error at: %lu\n", pos);
-  }
-*/
-
-
-
-  start = get_millis();
-  qsort(copy, n, type.size, type.compare);
-  stop = get_millis();
-  printf("SeqQSort time %.3f ms\n",stop-start);
-  print_vals(copy, &type, n);
-
-  // verify
-//  for (i=0; i<n-1; i++) assert(a[i]<=a[i+1]);
-
-  size_t pos = 0;
-
-  if(!same(a, copy, type.size*n, &pos)) {
-    pos = pos/type.size;
-    printf("Sorting error! At %lu \n", pos);
-//    printf("%u %u %u\n", pos > 0 ? a[pos-1] : -1, a[pos], a[pos+1]);
-//    printf("%u %u %u\n", pos > 0 ? c[pos-1] : -1, c[pos], c[pos+1]);
-  }
-
-  free(a);
-
-  free(copy);
-
-
-  return 0;
 }
