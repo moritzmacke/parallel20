@@ -18,7 +18,7 @@ void init_random(RGENPCG *rpcg, uint64_t seed) {
 }
 
 
-void *generate_random(size_t length, size_t item_size, FP_GENITEM item_generator, uint64_t seed) {
+void *generate_sequence(size_t length, size_t item_size, FP_GENITEM item_generator, int distribution, uint64_t seed) {
 
   char *p = (char *) malloc(length*item_size);
 
@@ -31,8 +31,31 @@ void *generate_random(size_t length, size_t item_size, FP_GENITEM item_generator
     size_t i;
     size_t n = length;
   
-    for (i=0; i<n; i++) { 
-      item_generator(&p[i*item_size], i, n, &rgen.rgen);
+    switch(distribution) {
+      case SORTED:
+        for (i=0; i<n; i++) { 
+          item_generator(&p[i*item_size], i, n, 0, &rgen.rgen);
+        }
+        break;
+      case SORTED_REV:
+        for (i=0; i<n; i++) { 
+          item_generator(&p[i*item_size], n-i, n, 0, &rgen.rgen);
+        }
+        break;
+      case MIRROR:
+        for (i=0; i<n/2; i++) { 
+          item_generator(&p[i*item_size], i, n/2, 0, &rgen.rgen);
+        }
+        for (; i<n; i++) { 
+          item_generator(&p[i*item_size], n-i, n - n/2, 0, &rgen.rgen);
+        }
+        break;
+      case RANDOM:
+      default:
+        for (i=0; i<n; i++) { 
+          item_generator(&p[i*item_size], i, n, 1.0, &rgen.rgen);
+        }
+        break;
     }
 
   }
@@ -40,14 +63,18 @@ void *generate_random(size_t length, size_t item_size, FP_GENITEM item_generator
   return p;
 }
 
-void generate_uint(void *item, size_t index, size_t total, RANDOMGEN *rgen) {
-  int *x = (int *) item;
-  *x = rgen->random(rgen->state)%total;
+void generate_uint(void *item, size_t index, size_t total, double random_weight, RANDOMGEN *rgen) {
+  uint32_t *x = (uint32_t *) item;
+  
+  double r = (rgen->random(rgen->state)/4294967295.0)*total;
+  *x = (uint32_t) (r*random_weight + index*(1.0-random_weight));
+
 }
 
-void generate_double(void *item, size_t index, size_t total, RANDOMGEN *rgen) {
+void generate_double(void *item, size_t index, size_t total, double random_weight, RANDOMGEN *rgen) {
   double *v = (double *) item;
-  *v = (rgen->random(rgen->state)/4294967295.0);
+  double r = (rgen->random(rgen->state)/4294967295.0)*total;
+  *v = r*random_weight + index*(1.0-random_weight);
 }
 
 /*
