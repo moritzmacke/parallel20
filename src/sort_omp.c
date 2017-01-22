@@ -2,100 +2,189 @@
 #include <stdio.h>
 #include <string.h>
 #include <omp.h>
+#include <math.h>
 
 #include "sort.h"
 
 typedef struct _chunk {
-  int thread_id;
-  int thread_id2;
+//  int thread_id;
+//  int thread_id2;
   size_t startIndex;
   size_t count_total;
   size_t count_le;
+//  size_t prefix_le;
 //  size_t count_gt;
 //  size_t count_eq;
 } CHUNK;
 
-void copy(char *a, char *b, size_t size) {
-  char *e = &a[size];
-  while(a < e) {
-    *b++ = *a++;
+/* */
+
+/* Moves middle element to midposition and makes it pivot */
+char *selectPivotTask(char **p_left, char **p_right, size_t size, FP_COMPARE compare) {
+
+  //assert(length >= 3);
+
+  char *mid = *p_left + ((*p_right - *p_left) / (2*size)) * size;
+
+  //mid smaller than first?
+  if(compare((void *) mid, (void *) *p_left) < 0) {
+    swap(mid, *p_left, size);
   }
-}
-
-void swap(char *a, char *b, size_t size) {
-
-  while(size > 0) {
-    char tmp = *a;
-    *a++ = *b;
-    *b++ = tmp;
-    size--;
-  }
-}
-
-static int num_threads = 1;
-
-int set_num_threads(int threads) {
-  if (threads>0) {
-    num_threads = (threads > omp_get_max_threads()) ? omp_get_max_threads() : threads;
-  }
-
-  omp_set_num_threads(num_threads);
-
-  return num_threads;
-}
-
-
-void print_ints0(int items[], int len) {
-  if(len <= 100 && len > 0) {
-    int i;
-    for(i=0; (i+1)<len; i++) {
-      printf("%d, ",items[i]);
+  //mid now bigger than last?
+  if(compare((void *) mid, (void *) *p_right) > 0) {
+    swap(mid, *p_right, size);
+    //was end smaller than first?
+    if(compare((void *) mid, (void *) *p_left) < 0) {
+      swap(mid, *p_left, size);
     }
-    printf("%d\n",items[i]);
+  }
+
+  *p_left += size;
+  *p_right -= size;
+
+  return mid;
+}
+
+
+void partition_task(char **p_left, char **p_right, char *pivot, size_t size, FP_COMPARE compare) {
+
+  char *left = *p_left;
+  char *right = *p_right;
+
+  do {
+    while(compare((void *) left, (void *) pivot) < 0) {
+      left += size;
+    }
+    while(compare((void *) pivot, (void *) right) < 0) {
+      right -= size;
+    }
+
+    if(left < right) {
+      swap(left, right, size);
+      //did we swap the pivot?
+      if(left == pivot) {
+        pivot = right; 
+      }
+      else if(right == pivot) {
+        pivot = left;
+      }
+      left += size;
+      right -= size;
+    }
+    else if(left == right) {
+      //met on same value == pivot
+      left += size;
+      right -= size;
+      break;
+    }
+  } while(left <= right);
+
+  *p_left = left;
+  *p_right = right;
+}
+
+
+void qs_task(char *start, ITYPE *type, size_t length) {
+  if(length > 1000/*CUTOFF*/) {
+
+//    printf("Qs_task (%lu), thread %d\n", length, omp_get_thread_num());
+
+    char *end = &start[(length-1)*type->size];
+    char *left = start;
+    char *right = end;
+
+    char *pivot = selectPivotTask(&left, &right, type->size, type->compare);
+
+//    printf("Qs_task (%lu) Pivot: ", length);
+//    print_val(pivot, type);
+//    printf("\n");
+//    print_vals(start, type, length);
+
+    partition_task(&left, &right, pivot, type->size, type->compare);
+
+//    printf("Qs_task partition\n");
+//    print_vals(start, type,length);
+
+    size_t size_low = (right - start)/type->size + 1;
+    size_t size_high = (end - left)/type->size + 1;
+
+#pragma omp task untied
+    qs_task(start, type, size_low);
+#pragma omp task untied
+    qs_task(left, type, size_high);
+
+  }
+  else {
+    qsort(start, length, type->size, type->compare);
   }
 }
 
-size_t test_partition(void *input, ITYPE *type, size_t length, void *buffer, void *pivot) {
+
+
+
+
+/* */
+
+size_t *prefix(size_t *counts, uint32_t length) {
+
+    size_t *prefixSums = (size_t *) malloc(length*sizeof(size_t));
+
+    size_t sum = 0;
+
+    uint32_t i;
+    for(i=0; i<length-1; i++) {
+        prefixSums[i] = sum;
+        sum += counts[i];
+    }
+    prefixSums[i] = sum;
+
+    return prefixSums;
+}
+
+size_t parallelPartition(void *input, ITYPE *type, size_t length, void *pivot, int threads) {
 
 //  printf("Pivot: %d\n", *((int *) pivot));
 
   int numThreads;
-  size_t step = type->size;
-  
-  CHUNK *chunks;
-//  size_t chunks;// = (item_count+CHUNK_SIZE-1)/CHUNK_SIZE;
-  size_t itemsPerChunk;
+
+  size_t *counts;
 
   size_t split = 0;
   
-#pragma omp parallel
+#pragma omp parallel num_threads(threads) default(none), shared(numThreads, split, counts) firstprivate(type, length, \
+        input, pivot)
 {
+   size_t step = type->size;
   
 #pragma omp single
   {
     numThreads = omp_get_num_threads();
 //    printf("%d threads in partition, length: %lu\n", numThreads, length);
-    itemsPerChunk = (length)/numThreads;  //last chunk larger...
-    chunks = (CHUNK *) malloc(numThreads*sizeof(CHUNK));
+    counts = (size_t *) malloc(numThreads*sizeof(size_t));
+//    chunks = (CHUNK *) malloc((numThreads+1)*sizeof(CHUNK));
+//    chunks[numThreads].startIndex = length;
+//    chunks[numThreads].count_total = 0;
   }
 
   if(length > numThreads) { //shouldn't call it anyway otherwise, but so it won't fail...
   
     int tid = omp_get_thread_num();
 
-    CHUNK *c = &chunks[tid];
 
-    c->startIndex = tid*itemsPerChunk;
+//    printf("[%f] Thread %d start.\n", omp_get_wtime(), tid);
 
+    size_t itemsPerChunk = (length)/numThreads;  //last chunk larger...
+    size_t startIndex = tid*itemsPerChunk;
     size_t chunklen = (tid == numThreads-1) ? length - tid*itemsPerChunk : itemsPerChunk;
-    c->count_total = chunklen;
 
 //    printf("Thread %d has [%lu:%lu] \n", tid, c->startIndex, c->startIndex + chunklen);
 
-    char *src = ((char *) input) + c->startIndex*step;
+    char *buffer = (char *) malloc(chunklen*step);
+
+    char *src = ((char *) input) + startIndex*step;
     char *end = src + chunklen*step;
 
-    char *tgt_le = ((char *) buffer) + tid*itemsPerChunk*step;
+    char *tgt_le = buffer;
     char *tgt_gt = tgt_le + (chunklen)*step;
     
     size_t countLE = 0;
@@ -116,27 +205,27 @@ size_t test_partition(void *input, ITYPE *type, size_t length, void *buffer, voi
 
     size_t countGT = chunklen - countLE;
   
-    c->count_le = countLE;
-    c->thread_id = tid;
+    counts[tid] = countLE;
+
+//    printf("[%f] Thread %d pass1 done.\n", omp_get_wtime(), tid);
   
 #pragma omp barrier
-  
-    size_t le_offset = 0;
-    size_t gt_offset = 0;
 
-    for(int i=0; i<numThreads; i++) {
-      //add sums..
-      gt_offset += chunks[i].count_le;
-      if(i<tid) {
-        le_offset += chunks[i].count_le;
-        gt_offset += chunks[i].count_total - chunks[i].count_le;
-      }
-    }
-    
+//    printf("[%f] Thread %d pass2 start.\n", omp_get_wtime(), tid);
+
+    size_t * prefixSums = prefix(counts, numThreads+1); //parallel prefix doesn't really pay off with few processors...
+
+    size_t total_le = prefixSums[numThreads];
+
+    size_t le_offset = prefixSums[tid];
+    size_t gt_offset = total_le + (startIndex - prefixSums[tid]);
+
+
+  
 //    printf("LE: [%lu:%lu], GT: [%lu:%lu]\n", le_offset, le_offset+c->count_le, gt_offset, gt_offset + (c->count_total - c->count_le));
 
 
-    char *src_le = ((char *) buffer) + c->startIndex*step;
+    char *src_le = buffer;
     char *src_gt = tgt_gt;
 
     tgt_le = ((char *) input) + le_offset*step;
@@ -145,9 +234,14 @@ size_t test_partition(void *input, ITYPE *type, size_t length, void *buffer, voi
     memcpy((void *) tgt_le, (void *) src_le, countLE*step);
     memcpy((void *) tgt_gt, (void *) src_gt, countGT*step);
 
+    free(buffer);
+    free(prefixSums);
+
     if(tid == numThreads - 1) {
       split = le_offset + countLE;
     }
+    
+//    printf("[%f] Thread %d done.\n", omp_get_wtime(), tid);
   }
   else  {
     #pragma omp single
@@ -184,19 +278,12 @@ size_t test_partition(void *input, ITYPE *type, size_t length, void *buffer, voi
     }
   }
 } //parallel
-
-//#pragma omp single
   
-  /*
-  for(i=0; i<threads; i++) {   
-    printf("Chunk %lu [%lu->%lu] by %i/%i: %lu-%lu-%lu\n", i, chunkstats[i].start, chunkstats[i].end, chunkstats[i].thread_id, chunkstats[i].thread_id2, chunkstats[i].smaller, chunkstats[i].equal, chunkstats[i].bigger);
-  }
-  */
-  
-  free(chunks);
+  free(counts);
 
   return split;
 }
+
 
 int *selectPivot(void *array, ITYPE *type, size_t length) {
   void *first = array;
@@ -246,41 +333,91 @@ int *selectPivot(void *array, ITYPE *type, size_t length) {
   return pivot;
 }
 
-void quicksort(void *array, ITYPE *type, size_t length, void *buffer) {
+static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t rstate) {
+
 
   if(length < 2) {
     return;
   }
 
-  if(length < 1000/*CUTOFF*/) {
-    qsort(array, length, type->size, type->compare);
+  size_t left_size;
+  int threads;
+
+#pragma omp parallel num_threads(numThreads)
+{
+  #pragma omp single
+  {
+    threads = omp_get_num_threads();
+//    printf("Threads in QS: %d requested: %d\n", threads, numThreads);
+  }
+}
+
+  if(threads < 2) {
+//    printf("T:%f Thread %d start seq sort (%lu).\n", omp_get_wtime(), omp_get_thread_num(), length);
+//    qsort(array, length, type->size, type->compare);
+  #pragma omp task 
+    qs_task((char *) array, type, length);
+//    printf("t:%f Thread %d seq sort done (%lu).\n", omp_get_wtime(), omp_get_thread_num(), length);
     return;
   }
 
-  void *pivot = selectPivot(array, type, length);
+
+//  void *pivot = selectPivot(array, type, length);
+  void *pivot = selectPivotRandom(array, type, length, 11, &rstate);
+
 
   swap((char *) array, (char *) pivot, type->size);
   pivot = array;
 
 //  printf("Before   : ");
 //  print_ints0((int *) array, length);
-  size_t left_size = test_partition(((char *) array) + type->size, type, length-1, ((char *) buffer) + type->size, pivot);
+  left_size = parallelPartition(((char *) array) + type->size, type, length-1, pivot, threads);
 //  printf("Split %3lu: ", left_size);
 //  print_ints0((int *) array, length);
 
   swap((char *) pivot, ((char *) array) + left_size*type->size , type->size);
 
 
+  double split = left_size/(double)length;
+  int leftp = (int) (split*numThreads);
+  if (leftp == 0) leftp++;
 
-//#pragma omp task 
-//{
-    quicksort(array, type, left_size, buffer);
-//}
+//  printf("Split: %.2f (%d/%d)\n", split, leftp, numThreads-leftp);
 
-//#pragma omp task 
-//{
-    quicksort(((char *) array) + (left_size+1)*type->size, type, length - left_size -1, ((char *) buffer) + (left_size+1)*type->size);
-//}
+
+#pragma omp parallel sections
+{
+  #pragma omp section
+  {
+    qs(array, type, left_size, leftp, rstate);
+  }
+
+  #pragma omp section
+  {
+    qs(((char *) array) + (left_size+1)*type->size, type, length - left_size -1, numThreads-leftp, rstate);
+  }
+}
+
+
+ 
   
+  
+}
+
+
+void quicksort(void *array, ITYPE *type, size_t length) {
+
+    int numThreads;
+
+    #pragma omp parallel
+{
+    #pragma omp single
+        numThreads = omp_get_num_threads();
+}
+
+//   printf("%d threads at start\n", numThreads);
+
+   qs(array, type, length, numThreads, 612345789);
+#pragma omp taskwait
   
 }
