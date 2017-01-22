@@ -61,8 +61,6 @@ int main(int argc, char *argv[])
 
   n = opts.size;
 
-  srand(opts.seed);
-
 //  printf("Number of threads %d, n=%d, seed=%d\n", threads, n, seed);
 
   if(opts.useDouble) {

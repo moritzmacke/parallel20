@@ -348,7 +348,7 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
   #pragma omp single
   {
     threads = omp_get_num_threads();
-    printf("Threads in QS: %d requested: %d\n", threads, numThreads);
+//    printf("Threads in QS: %d requested: %d\n", threads, numThreads);
   }
 }
 
@@ -363,7 +363,7 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
 
 
 //  void *pivot = selectPivot(array, type, length);
-  void *pivot = selectPivotRandom(array, type, length, 9, &rstate);
+  void *pivot = selectPivotRandom(array, type, length, 11, &rstate);
 
 
   swap((char *) array, (char *) pivot, type->size);
@@ -382,7 +382,7 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
   int leftp = (int) (split*numThreads);
   if (leftp == 0) leftp++;
 
-  printf("Split: %.2f (%d/%d)\n", split, leftp, numThreads-leftp);
+//  printf("Split: %.2f (%d/%d)\n", split, leftp, numThreads-leftp);
 
 
 #pragma omp parallel sections

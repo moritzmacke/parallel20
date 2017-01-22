@@ -41,31 +41,37 @@ int main(int argc, char *argv[])
 
   double start, stop;
 
-  struct _opts prog_options;
+  struct _opts opts;
 
-  prog_options.threads = 0;
-  prog_options.seed = 0;
-  prog_options.distribution = 0;
-  prog_options.size = 1;
-  prog_options.longValidate = TRUE;
+  opts.threads = 0;
+  opts.seed = 0;
+  opts.distribution = RANDOM;
+  opts.size = 1;
+  opts.longValidate = FALSE;
 
-  if(!get_options(argc, argv, &prog_options)) {
+  if(!get_options(argc, argv, &opts)) {
     return 1;
   }
 
-  n = prog_options.size;
-  seed = prog_options.seed;
-  omp_set_num_threads(prog_options.threads);
+  n = opts.size;
+  seed = opts.seed;
+  omp_set_num_threads(opts.threads);
 
-  printf("Number of threads %d, n=%d, seed=%d\n", prog_options.threads, n, seed);
+  printf("Number of threads %d, n=%d, seed=%d\n", opts.threads, n, seed);
 
 
-  type.size = sizeof(int);
-  type.compare = compare_ints;
-  type.print = print_int;
-
-  a = generate_sequence(n, type.size, generate_uint, RANDOM, seed);
-//  a = generate_random(prog_options.size, sizeof(int), generate_item, prog_options.seed, prog_options.pattern);
+  if(opts.useDouble) {
+    type.size = sizeof(double);
+    type.compare = compare_doubles;
+    type.print = print_double;
+    a = generate_sequence(n, type.size, generate_double, opts.distribution, opts.seed);
+  }
+  else {
+    type.size = sizeof(int);
+    type.compare = compare_ints;
+    type.print = print_int;
+    a = generate_sequence(n, type.size, generate_uint, opts.distribution, opts.seed);
+  }
 
   copy = malloc(n*type.size);
   memcpy(copy, a, n*type.size);
@@ -97,7 +103,7 @@ int main(int argc, char *argv[])
   printf("Parallel sort time %.3f ms\n",(stop-start));
 
   printf("Validating...\n");
-  if(prog_options.longValidate) {
+  if(opts.longValidate) {
     start = get_millis();
     qsort(copy, n, type.size, type.compare);
     stop = get_millis();
@@ -134,7 +140,7 @@ int main(int argc, char *argv[])
 }
 
 void print_usage(void) {
-  printf(" -n SIZE -s SEED -g DISTRIBUTION -t NUM_THREADS\n");
+  printf(" -n SIZE -s SEED -g DISTRIBUTION -t NUM_THREADS -d (=use doubles) \n");
 }
 
 int get_options(int argc, char *argv[], struct _opts *options) {
@@ -143,7 +149,7 @@ int get_options(int argc, char *argv[], struct _opts *options) {
   int c;
 
 
-  while ((c = getopt(argc, argv, "n:s:t:g:")) != -1) {
+  while ((c = getopt(argc, argv, "n:s:t:g:dv")) != -1) {
     switch (c) {
       case 'n':
         options->size = (uint32_t) strtol(optarg, NULL, 0);
@@ -156,6 +162,12 @@ int get_options(int argc, char *argv[], struct _opts *options) {
         break;
       case 'g':
         options->distribution = (uint32_t) strtol(optarg, NULL, 0);
+        break;
+      case 'd':
+        options->useDouble = TRUE;
+        break;
+      case 'v':
+        options->longValidate = TRUE;
         break;
       case '?':
         success = FALSE;
