@@ -18,8 +18,11 @@
 #define MESSAGE_ORDER 		4
 #define MESSAGE_DATA_LEN	5
 
+/* Depth of the partitioning algorithm */
 static unsigned int level = 0;
+
 static unsigned int *pivot;
+
 static unsigned int *buffer, *input, *data;
 static unsigned int buf_len, buf_size, data_len;
 static unsigned int rank, p, n;
@@ -194,7 +197,7 @@ int main(int argc, char *argv[])
 	MPI_Errhandler errh;
 	char c;
 	unsigned int i;
-	unsigned int *output; //input buffer is also used for output
+	unsigned int *output;
 	
 	srand(time(NULL));
 	
@@ -224,7 +227,12 @@ int main(int argc, char *argv[])
 	MPI_Comm_size(MPI_COMM_WORLD,&p);
 	MPI_Comm_rank(MPI_COMM_WORLD,&rank);
 	
-	if(p != 1) {
+	MASTER(
+		input = generate_sequence(n, sizeof(int), generate_uint, RANDOM, rand());
+		output = input; //input buffer is also used for output
+	)
+	
+	if(p != 1 && n > 10*p) {
 		i = 2;
 		while(p >= i) {
 			i*=2;
@@ -234,8 +242,11 @@ int main(int argc, char *argv[])
 			return 0;
 		}
 	} else {
-		//sequential qsort
-		goto Error;
+		/* Use sequential qsort on master processor if dataset is not big enough */
+		MASTER(
+			qsort(input, n, sizeof(int), cmpfunc);
+		)
+		goto End;
 	}
 	
 	/* Memory allocation for buffer, pivot array and data slice */
@@ -247,7 +258,6 @@ int main(int argc, char *argv[])
 	
 	/* Master sends data to all slaves. */
 	MASTER(
-		input = generate_sequence(n, sizeof(int), generate_uint, RANDOM, rand());
 		memcpy(data, input, n/p * sizeof(int));
 		for(int i = 1; i < p; i++) {
 			MPI_Send(&input[i * (n/p)],(i == p-1 ? n - (n/p) * i : (n/p)),MPI_UNSIGNED,i,MESSAGE_INPUT,MPI_COMM_WORLD);
@@ -264,49 +274,48 @@ int main(int argc, char *argv[])
 	)
 	
 	qsort_partition();
+	
+	/* Once partitioning is done, call sequential qsort */
 	qsort(data, data_len, sizeof(int), cmpfunc);
 	
 	MASTER(
 		unsigned int received_len;
 		unsigned int pos = 0;
-		output = input;
 		memcpy(output, data, data_len * sizeof(int));
 		pos += data_len;
 		
+		/* Master reassembles sorted data from slave */
 		for(int i = 1; i < p; i++) {
 			MPI_Recv(&received_len, 1, MPI_UNSIGNED, i, MESSAGE_DATA_LEN, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			MPI_Recv(buffer, received_len, MPI_UNSIGNED, i, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			memcpy(&output[pos], buffer, received_len * sizeof(int));
 			pos += received_len;
 		}
+	/* Slave sends its full (sorted) data slice to master */
 	) SLAVE(
 		MPI_Send(&data_len, 1, MPI_UNSIGNED, MASTER_PROCESSOR, MESSAGE_DATA_LEN, MPI_COMM_WORLD);
 		MPI_Send(data, data_len, MPI_UNSIGNED, MASTER_PROCESSOR, MESSAGE_DATA, MPI_COMM_WORLD);
 	)
 	
-	MASTER(
-		for(int i = 0; i < n; i++) {
-			printf("%3d ", output[i]);
-			if((i+1) % 10 == 0) printf("\n");
-		}
-	)
-	
-	/* Master reassembles sorted data from slave */
 
 	MASTER(
 		endtime = MPI_Wtime();
-		printf("%d", (unsigned int) endtime);
-		free(input);
+		printf("%d\n", (unsigned int) endtime);
 	)
 
 	/* Clean up and finalize */
 	free(buffer);
 	free(data);
-	MPI_Errhandler_free(&errh);
-	MPI_Finalize();
 	
-	return 0;
+	End:
+		MASTER(
+			free(input);
+		)
+	
+		MPI_Errhandler_free(&errh);
+		MPI_Finalize();
+		return 0;
 	
 	Error:
-	return 1;
+		return 1;
 }
