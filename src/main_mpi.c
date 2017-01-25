@@ -37,6 +37,10 @@ int cmpfunc(const void * a, const void * b)
    return ( *(int*)a - *(int*)b );
 }
 
+/* Pivot picking strategy */
+enum pivot_t { MANY_RANDOM, ONE_RANDOM, WORST_CASE };
+static enum pivot_t piv_method = MANY_RANDOM;
+
 /* MPI Error handler:
  * Provides minimal error information, aborts process.
  */
@@ -60,16 +64,22 @@ void eh(MPI_Comm *comm, int *err,...)
 /* Pick pivot element in the data array.
  * Choose 5 elements at random, median is the pivot.
  */
-int pick_pivot()
+unsigned int pick_pivot()
 {
 	unsigned int sum = 0, i;
-	for(i = 0; i < 5; i++) {
-		sum += data[rand() % data_len];
+	if(piv_method == MANY_RANDOM) {
+		for(i = 0; i < 5; i++) {
+			sum += data[rand() % data_len];
+		}
+		return sum / 5;
+	} else if(piv_method == ONE_RANDOM) {
+		return  data[rand() % data_len];
+	} else { // WORST_CASE
+		return 0;
 	}
-	return sum / 5;
 }
 
-int reorder_slice(int pivot)
+unsigned int reorder_slice(int pivot)
 {
 	unsigned int left = 0, right = data_len-1;
 	unsigned int temp;
@@ -93,7 +103,11 @@ void qsort_partition()
 {
 	unsigned int real_pivot = 0, middle;
 	unsigned int i = 0, j = 0, k = 0;
+	
+	/* Determines if this processor gets data smaller or bigger than pivot */
 	unsigned int order = 0;
+	
+	/* Rank of the processor this processor will share datasets with */
 	unsigned int friend = 0;
 	
 	while(level < (unsigned int) log2(p)) {
@@ -208,6 +222,12 @@ int main(int argc, char *argv[])
 			case 'n':
 				n = strtol(optarg, NULL, 10);
 				break;
+			case 'p':
+				piv_method = strtol(optarg, NULL, 10);
+				if(!(piv_method <= 2 && piv_method >= 0)) {
+					goto Error;
+				}
+				break;
 			default:
 				break;
 		}
@@ -300,7 +320,7 @@ int main(int argc, char *argv[])
 
 	MASTER(
 		endtime = MPI_Wtime();
-		printf("%d\n", (unsigned int) endtime);
+		printf("%0.4f\n", endtime - starttime);
 	)
 
 	/* Clean up and finalize */
