@@ -16,8 +16,8 @@ qs_cilk0: main_cilk.c sort_cilk0.c common.c validate.c generate.c pcg/pcg_basic.
 qs_cilk1: main_cilk.c sort_cilk1.c common.c validate.c generate.c pcg/pcg_basic.c
 	gcc $(FLAGS) -fcilkplus $+ -o $@
 	
-qs_mpi: main_mpi.c common.c generate.c pcg/pcg_basic.c
-	mpicc -lm -o $@ -O3 $+ 
+qs_mpi: main_mpi.c common.c generate.c validate.c pcg/pcg_basic.c
+	mpicc -o $@ -O3 $+ 
 
 .PHONY: all
 all: qs_omp
