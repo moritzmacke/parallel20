@@ -202,8 +202,6 @@ int main(int argc, char *argv[])
 {
 	MPI_Errhandler errh;
 	char c;
-	unsigned int i;
-	unsigned int *output;
 	
 	int seed = time(NULL);
 	srand(seed);
@@ -246,8 +244,8 @@ int main(int argc, char *argv[])
 	MPI_Comm_set_errhandler(MPI_COMM_WORLD, errh);
 
 	/* Find out number of processors and rank */
-	MPI_Comm_size(MPI_COMM_WORLD,&p);
-	MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+	MPI_Comm_size(MPI_COMM_WORLD,(int *)&p);
+	MPI_Comm_rank(MPI_COMM_WORLD,(int *)&rank);
 
 	MASTER(
 		data = generate_sequence(n, sizeof(int), generate_uint, RANDOM, seed2);
@@ -269,9 +267,9 @@ int main(int argc, char *argv[])
 	}
 	
 	/* Memory allocation for buffer, pivot array and data slice */
-	pivot = (int *) calloc(p/2, sizeof(int));
+	pivot = (unsigned int *) calloc(p/2, sizeof(int));
 	SLAVE( 
-		data = (int *) malloc(n * sizeof(int)); 
+		data = (unsigned int *) malloc(n * sizeof(int)); 
 	)
 	data_len = (rank == p-1 ? n - (n/p) * rank : n/p);
 	
@@ -341,7 +339,4 @@ int main(int argc, char *argv[])
 		MPI_Errhandler_free(&errh);
 		MPI_Finalize();
 		return 0;
-	
-	Error:
-		return 1;
 }
