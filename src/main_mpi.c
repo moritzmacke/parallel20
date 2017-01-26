@@ -5,7 +5,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <unistd.h>
-//#include <math.h>
+#include <math.h>
 
 // MPI header
 #include <mpi.h>
@@ -24,8 +24,8 @@
 
 static unsigned int *pivot;
 
-static unsigned int *buffer, *input, *data;
-static unsigned int buf_len, buf_size, data_len;
+static unsigned int *input, *output, *data = NULL;
+static unsigned int data_len;
 static unsigned int rank, p, n;
 
 static double starttime, endtime;
@@ -103,11 +103,9 @@ unsigned int reorder_slice(int pivot)
 void qsort_partition()
 {
 	unsigned int real_pivot = 0, middle;
-//	unsigned int i = 0, j = 0, k = 0;
-
-//  unsigned int pPerSection = p;
-  unsigned int partitions = 1;
-  unsigned int pPerSection = p;
+	unsigned int send_len = 0, receive_len = 0;
+	unsigned int partitions = 1;
+	unsigned int pPerSection = p;
 	
 	/* Determines if this processor gets data smaller or bigger than pivot */
 	unsigned int order = 0;
@@ -121,27 +119,22 @@ void qsort_partition()
 	
 		/* Master receives pivot from every slave, computes median */
 		MASTER(
-      unsigned int received_pivot;
-      for(int k=0; k<partitions; k++) {
-        pivot[k] = 0;
-        for(int j=k*pPerSection; j<(k+1)*pPerSection; j++) {
-          if(j != 0) {
-            MPI_Recv(&received_pivot, 1, MPI_UNSIGNED, j, MESSAGE_PIVOT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-//            printf("Received %d from %d\n", received_pivot, j);
-            pivot[k] += received_pivot;
-          }
-          else {  //MASTER
-//            printf("Received %d from %d\n", local_pivot, 0);
-            pivot[k] += local_pivot;
-          }
-        }
-//        printf("Sum %d = %d\n", k, pivot[k]);
-        pivot[k] /= pPerSection;
-      }
+			unsigned int received_pivot;
+			for(int k=0; k<partitions; k++) {
+				pivot[k] = 0;
+				for(int j=k*pPerSection; j<(k+1)*pPerSection; j++) {
+					if(j != 0) {
+						MPI_Recv(&received_pivot, 1, MPI_UNSIGNED, j, MESSAGE_PIVOT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+						pivot[k] += received_pivot;
+					} else {  //MASTER
+						pivot[k] += local_pivot;
+					}
+				}
+				pivot[k] /= pPerSection;
+			}
 		) SLAVE(
 			MPI_Send(&local_pivot, 1, MPI_UNSIGNED, MASTER_PROCESSOR, MESSAGE_PIVOT, MPI_COMM_WORLD);
 		)
-//		MPI_Barrier(MPI_COMM_WORLD);
 		
 		/* Master sends pivot and order to every slave */
 		MASTER(
@@ -152,65 +145,57 @@ void qsort_partition()
 		) SLAVE(
 			MPI_Recv(&real_pivot, 1, MPI_UNSIGNED, MASTER_PROCESSOR, MESSAGE_PIVOT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 		)
-//		MPI_Barrier(MPI_COMM_WORLD);
 				
 		middle = reorder_slice(real_pivot);
 
-    printf("Rank %d has pivot %d\n", rank, real_pivot);
-		
 		/* All processors share datasets with each other */
-	
-    unsigned int section = rank/(pPerSection/2);
-//    printf("Rank %d in section %d\n", rank, section);
-    order = section % 2;
+		unsigned int section = rank/(pPerSection/2);
+		order = section % 2;
 
-		unsigned int received_len = 0;
 		if(order == 0) { // Order = 0 means processor is on the "left" side
 			/* Calculate friend processor to share data with */
-//			friend = rank + (unsigned int) pow(2, ((unsigned int) log2(p)) - (level+1));
-      friend = rank + pPerSection/2;
+			friend = rank + pPerSection/2;
 			
 			/* Send every element bigger than the pivot */
-			buf_len = data_len - middle;
+			send_len = data_len - middle;
 			
 			/* Send "bigger" dataset to friend processor */
-			memcpy(buffer, &data[middle], buf_len * sizeof(int));
-			MPI_Send(&buf_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD);
-			MPI_Send(buffer, buf_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD);
+			MPI_Send(&send_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD);
+			MPI_Send(&data[middle], send_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD);
 			
 			/* Receive "smaller" dataset from friend processor */
-			MPI_Recv(&received_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			MPI_Recv(buffer, received_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			MPI_Recv(&receive_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			MPI_Recv(&data[middle], receive_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			
-			memcpy(&data[middle], buffer, received_len * sizeof(int));
-			data_len = middle + received_len;
+			data_len = middle + receive_len;
 		} else {
-			//friend = rank - (unsigned int) pow(2, ((unsigned int) log2(p)) - (level+1));
-      friend = rank - pPerSection/2;
+			friend = rank - pPerSection/2;
 			
 			/* Send every element smaller than the pivot */
-			buf_len = middle;
+			send_len = middle;
 			
 			/* Receive "bigger" dataset from friend processor */
-			MPI_Recv(&received_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			MPI_Recv(buffer, received_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			MPI_Recv(&receive_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			MPI_Recv(&data[data_len], receive_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			
 			/* Send "smaller" dataset to friend processor */
-			memcpy(&data[data_len], buffer, received_len * sizeof(int)); //Append received buffer first, then cut data from front and move back to index 0
-			data_len = data_len + received_len;
-			memcpy(buffer, data, buf_len * sizeof(int));
-			memmove(data, &data[buf_len], (data_len - buf_len) * sizeof(int));
-			data_len = data_len - buf_len;
-			MPI_Send(&buf_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD);
-			MPI_Send(buffer, buf_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD);	
+			data_len = data_len + receive_len;
+			MPI_Send(&send_len, 1, MPI_UNSIGNED, friend, MESSAGE_DATA_LEN, MPI_COMM_WORLD);
+			MPI_Send(data, send_len, MPI_UNSIGNED, friend, MESSAGE_DATA, MPI_COMM_WORLD);	
+			memmove(data, &data[send_len], (data_len - send_len) * sizeof(int));
+			data_len = data_len - send_len;
 		}
 		
-//		MPI_Barrier(MPI_COMM_WORLD);
-//		level++;
-    pPerSection /= 2;
-    partitions *= 2;
-
+		pPerSection /= 2;
+		partitions *= 2;
 	}
+}
+
+int is_power_of_2(unsigned int x)
+{
+	while (((x % 2) == 0) && x > 1) /* While x is even and > 1 */
+		x /= 2;
+	return (x == 1);
 }
 
 int main(int argc, char *argv[])
@@ -220,14 +205,12 @@ int main(int argc, char *argv[])
 	unsigned int i;
 	unsigned int *output;
 	
-  int seed = time(NULL);
-
+	int seed = time(NULL);
 	srand(seed);
-
-  int seed2 = rand();
+	int seed2 = rand();
 	
 	opterr = 0;
-	while((c = getopt(argc, argv, "n:")) != -1)
+	while((c = getopt(argc, argv, "pn:")) != -1)
 	{
 		switch(c) {
 			case 'n':
@@ -236,7 +219,8 @@ int main(int argc, char *argv[])
 			case 'p':
 				piv_method = strtol(optarg, NULL, 10);
 				if(!(piv_method <= 2 && piv_method >= 0)) {
-					goto Error;
+					MASTER(fprintf(stderr, "Invalid pivot method.\n");)
+					goto End;
 				}
 				break;
 			default:
@@ -245,14 +229,15 @@ int main(int argc, char *argv[])
 	}
 	
 	if(n == 0) {
-		goto Error;
+		MASTER(fprintf(stderr, "Empty dataset.\n");)
+		goto End;
 	}
 
 
-  ITYPE type;
-  type.size = sizeof(int);
-  type.compare = cmpfunc;
-  type.print = print_int;
+	ITYPE type;
+	type.size = sizeof(int);
+	type.compare = cmpfunc;
+	type.print = print_int;
 	
 	MPI_Init(&argc,&argv);
 
@@ -263,24 +248,17 @@ int main(int argc, char *argv[])
 	/* Find out number of processors and rank */
 	MPI_Comm_size(MPI_COMM_WORLD,&p);
 	MPI_Comm_rank(MPI_COMM_WORLD,&rank);
-	
-  //TODO need test here to see if p is power of 2!
-
 
 	MASTER(
-		input = generate_sequence(n, sizeof(int), generate_uint, RANDOM, seed2);
-		output = input; //input buffer is also used for output
-    print_vals((char *) input, &type, n);
+		data = generate_sequence(n, sizeof(int), generate_uint, RANDOM, seed2);
+		input = data;
+		print_vals((char *) input, &type, n);
 	)
 	
 	if(p != 1 && n > 10*p) {
-		i = 2;
-		while(p >= i) {
-			i*=2;
-		}
-		p = i/2;
-		if(rank >= p) {
-			return 0;
+		if(!is_power_of_2(p)) {
+			MASTER(fprintf(stderr, "Number of processors has to be power of 2.\n");)
+			goto End;
 		}
 	} else {
 		/* Use sequential qsort on master processor if dataset is not big enough */
@@ -291,15 +269,14 @@ int main(int argc, char *argv[])
 	}
 	
 	/* Memory allocation for buffer, pivot array and data slice */
-	buf_size = n;
 	pivot = (int *) calloc(p/2, sizeof(int));
-	buffer = (int *) malloc(buf_size * sizeof(int)); 
-	data = (int *) malloc(buf_size * sizeof(int)); 
+	SLAVE( 
+		data = (int *) malloc(n * sizeof(int)); 
+	)
 	data_len = (rank == p-1 ? n - (n/p) * rank : n/p);
 	
 	/* Master sends data to all slaves. */
 	MASTER(
-		memcpy(data, input, n/p * sizeof(int));
 		for(int i = 1; i < p; i++) {
 			MPI_Send(&input[i * (n/p)],(i == p-1 ? n - (n/p) * i : (n/p)),MPI_UNSIGNED,i,MESSAGE_INPUT,MPI_COMM_WORLD);
 		}
@@ -322,14 +299,13 @@ int main(int argc, char *argv[])
 	MASTER(
 		unsigned int received_len;
 		unsigned int pos = 0;
-		memcpy(output, data, data_len * sizeof(int));
+		output = data;
 		pos += data_len;
 		
 		/* Master reassembles sorted data from slave */
 		for(int i = 1; i < p; i++) {
 			MPI_Recv(&received_len, 1, MPI_UNSIGNED, i, MESSAGE_DATA_LEN, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			MPI_Recv(buffer, received_len, MPI_UNSIGNED, i, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			memcpy(&output[pos], buffer, received_len * sizeof(int));
+			MPI_Recv(&output[pos], received_len, MPI_UNSIGNED, i, MESSAGE_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			pos += received_len;
 		}
 	/* Slave sends its full (sorted) data slice to master */
@@ -342,33 +318,25 @@ int main(int argc, char *argv[])
 	MASTER(
 		endtime = MPI_Wtime();
 		printf("%0.3f ms\n", (endtime - starttime)*1000);
+		/*
+		printf("Validating...\n");
 
-    printf("Validating...\n");
+		unsigned int *test = generate_sequence(n, sizeof(int), generate_uint, RANDOM, seed2);
+		qsort(test, n, sizeof(int), cmpfunc);
 
-    unsigned int *test = generate_sequence(n, sizeof(int), generate_uint, RANDOM, seed2);
-    qsort(test, n, sizeof(int), cmpfunc);
-
-    if(arraysEqual(input, test, n, sizeof(int), cmpfunc, NULL)) {
-      printf("OK\n");
-    }
-    else {
-      printf("Sorting error!\n");
-      print_vals((char *) input, &type, n);
-      print_vals((char *) test, &type, n);
-    }
+		if(arraysEqual(output, test, n, sizeof(int), cmpfunc, NULL)) {
+			printf("OK\n");
+		}
+		else {
+			fprintf(stderr, "Sorting error!\n");
+			//print_vals((char *) input, &type, n);
+			//print_vals((char *) test, &type, n);
+		}*/
 	)
 
-
-
-
 	/* Clean up and finalize */
-	free(buffer);
-	free(data);
-	
 	End:
-		MASTER(
-			free(input);
-		)
+		if(data != NULL) free(data);
 	
 		MPI_Errhandler_free(&errh);
 		MPI_Finalize();
