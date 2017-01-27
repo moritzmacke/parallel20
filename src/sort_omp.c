@@ -284,56 +284,7 @@ size_t parallelPartition(void *input, ITYPE *type, size_t length, void *pivot, i
   return split;
 }
 
-
-int *selectPivot(void *array, ITYPE *type, size_t length) {
-  void *first = array;
-  void *mid = (void *) (((char *)array) + (length/2)*type->size);
-  void *last = (void *) (((char *)array) + (length-1)*type->size);
-  void *pivot = first;
-
-//  printf("Pivot candidates: %d, %d, %d\n", *((int *) first) , *((int *) mid), *((int *) last));
-
-  if(type->compare(first, last) > 0) {
-    //first > last
-    if(type->compare(first, mid) > 0) {
-      //first > last, mid
-      if(type->compare(mid, last) > 0) {
-        //first > mid > last
-        pivot = mid;
-      }
-      else {
-        //first > last >= mid
-        pivot = last;
-      }
-    }
-    else {
-      //mid >= first > last
-    }
-  }
-  else {
-    //last >= first
-    if(type->compare(first, mid) > 0) {
-      //last >= first > mid
-    }
-    else {
-      //last, mid >= first
-      if(type->compare(last, mid) > 0) {
-        //last > mid >= first
-        pivot = mid;
-      }
-      else {
-        //mid >= last >= first
-        pivot = last;
-      }
-    }
-  }
-
-//  printf("Chose: %d\n", *((int *) pivot));
-
-  return pivot;
-}
-
-static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t rstate) {
+static void qs(void *array, ITYPE *type, size_t length, int numThreads, uint32_t numPivots, int32_t rstate) {
 
 
   if(length < 2) {
@@ -343,7 +294,7 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
   size_t left_size;
   int threads;
 
-#pragma omp parallel num_threads(numThreads)
+#pragma omp parallel num_threads(numThreads) default(none) shared(threads)
 {
   #pragma omp single
   {
@@ -363,7 +314,7 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
 
 
 //  void *pivot = selectPivot(array, type, length);
-  void *pivot = selectPivotRandom(array, type, length, 11, &rstate);
+  void *pivot = selectPivotRandom(array, type, length, numPivots, &rstate);
 
 
   swap((char *) array, (char *) pivot, type->size);
@@ -389,12 +340,12 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
 {
   #pragma omp section
   {
-    qs(array, type, left_size, leftp, rstate);
+    qs(array, type, left_size, leftp, numPivots, rstate);
   }
 
   #pragma omp section
   {
-    qs(((char *) array) + (left_size+1)*type->size, type, length - left_size -1, numThreads-leftp, rstate);
+    qs(((char *) array) + (left_size+1)*type->size, type, length - left_size - 1, numThreads-leftp, numPivots, rstate);
   }
 }
 
@@ -405,7 +356,7 @@ static void qs(void *array, ITYPE *type, size_t length, int numThreads, int32_t 
 }
 
 
-void quicksort(void *array, ITYPE *type, size_t length) {
+void quicksort_omp(void *array, ITYPE *type, size_t length, uint32_t numPivots) {
 
     int numThreads;
 
@@ -417,7 +368,7 @@ void quicksort(void *array, ITYPE *type, size_t length) {
 
 //   printf("%d threads at start\n", numThreads);
 
-   qs(array, type, length, numThreads, 612345789);
+   qs(array, type, length, numThreads, numPivots, 612345789);
 #pragma omp taskwait
   
 }

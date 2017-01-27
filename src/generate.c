@@ -3,11 +3,11 @@
 
 #include "generate.h"
 
-uint32_t random_uint32(void *state) {
+static uint32_t random_uint32(void *state) {
     return pcg32_random_r((pcg32_random_t *) state);
 }
 
-void init_random(RGENPCG *rpcg, uint64_t seed) {
+static void init_random(RGENPCG *rpcg, uint64_t seed) {
 
     pcg32_random_t s = PCG32_INITIALIZER;
     s.state ^= seed;

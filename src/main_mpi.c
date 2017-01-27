@@ -22,7 +22,7 @@
 /* Depth of the partitioning algorithm */
 //static unsigned int level = 0;
 
-static unsigned int *pivot;
+static double *pivot;
 
 static unsigned int *input, *output, *data = NULL;
 static unsigned int data_len;
@@ -39,8 +39,8 @@ int cmpfunc(const void * a, const void * b)
 }
 
 /* Pivot picking strategy */
-enum pivot_t { MANY_RANDOM, ONE_RANDOM, WORST_CASE };
-static enum pivot_t piv_method = MANY_RANDOM;
+//enum pivot_t { MANY_RANDOM, ONE_RANDOM, WORST_CASE };
+static int pivot_samples = 5;
 
 /* MPI Error handler:
  * Provides minimal error information, aborts process.
@@ -65,16 +65,15 @@ void eh(MPI_Comm *comm, int *err,...)
 /* Pick pivot element in the data array.
  * Choose 5 elements at random, median is the pivot.
  */
-unsigned int pick_pivot()
+double pick_pivot()
 {
-	unsigned int sum = 0, i;
-	if(piv_method == MANY_RANDOM) {
-		for(i = 0; i < 5; i++) {
+	double sum = 0;
+    int i;
+	if(pivot_samples > 0) {
+		for(i = 0; i < pivot_samples; i++) {
 			sum += data[rand() % data_len];
 		}
-		return sum / 5;
-	} else if(piv_method == ONE_RANDOM) {
-		return  data[rand() % data_len];
+		return sum / pivot_samples;
 	} else { // WORST_CASE
 		return 0;
 	}
@@ -114,39 +113,42 @@ void qsort_partition()
 	unsigned int friend = 0;
 	
 	while(pPerSection > 1) {
+
+//        printf("Rank %d data len %d\n", rank, data_len);
+
 		/* Every processor computes pivot for its data slice */
-		unsigned int local_pivot = pick_pivot();
+		double local_pivot = data_len == 0? NAN : pick_pivot();
 	
 		/* Master receives pivot from every slave, computes median */
 		MASTER(
-			unsigned int received_pivot;
+			double received_pivot;
 			for(int k=0; k<partitions; k++) {
 				pivot[k] = 0;
 				for(int j=k*pPerSection; j<(k+1)*pPerSection; j++) {
 					if(j != 0) {
-						MPI_Recv(&received_pivot, 1, MPI_UNSIGNED, j, MESSAGE_PIVOT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-						pivot[k] += received_pivot;
+						MPI_Recv(&received_pivot, 1, MPI_DOUBLE, j, MESSAGE_PIVOT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 					} else {  //MASTER
-						pivot[k] += local_pivot;
+                        received_pivot = local_pivot;
 					}
+                    pivot[k] += received_pivot != NAN? received_pivot/pPerSection : 0;
 				}
-				pivot[k] /= pPerSection;
 			}
 		) SLAVE(
-			MPI_Send(&local_pivot, 1, MPI_UNSIGNED, MASTER_PROCESSOR, MESSAGE_PIVOT, MPI_COMM_WORLD);
+			MPI_Send(&local_pivot, 1, MPI_DOUBLE, MASTER_PROCESSOR, MESSAGE_PIVOT, MPI_COMM_WORLD);
 		)
 		
 		/* Master sends pivot and order to every slave */
 		MASTER(
 			for(int i = 1; i < p; i++) {
-				MPI_Send(&pivot[i/pPerSection], 1, MPI_UNSIGNED, i, MESSAGE_PIVOT, MPI_COMM_WORLD);
+                unsigned int ipivot = (unsigned int) roundl(pivot[i/pPerSection]);
+				MPI_Send(&ipivot, 1, MPI_UNSIGNED, i, MESSAGE_PIVOT, MPI_COMM_WORLD);
 			}
-			real_pivot = pivot[0];
+			real_pivot = (unsigned int) roundl(pivot[0]);
 		) SLAVE(
 			MPI_Recv(&real_pivot, 1, MPI_UNSIGNED, MASTER_PROCESSOR, MESSAGE_PIVOT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 		)
-				
-		middle = reorder_slice(real_pivot);
+    
+		middle = data_len == 0? 0 : reorder_slice(real_pivot);
 
 		/* All processors share datasets with each other */
 		unsigned int section = rank/(pPerSection/2);
@@ -208,15 +210,15 @@ int main(int argc, char *argv[])
 	int seed2 = rand();
 	
 	opterr = 0;
-	while((c = getopt(argc, argv, "pn:")) != -1)
+	while((c = getopt(argc, argv, "p:n:")) != -1)
 	{
 		switch(c) {
 			case 'n':
 				n = strtol(optarg, NULL, 10);
 				break;
 			case 'p':
-				piv_method = strtol(optarg, NULL, 10);
-				if(!(piv_method <= 2 && piv_method >= 0)) {
+				pivot_samples = strtol(optarg, NULL, 10);
+				if(!(pivot_samples <= 1000 && pivot_samples >= 0)) {
 					MASTER(fprintf(stderr, "Invalid pivot method.\n");)
 					goto End;
 				}
@@ -267,7 +269,7 @@ int main(int argc, char *argv[])
 	}
 	
 	/* Memory allocation for buffer, pivot array and data slice */
-	pivot = (unsigned int *) calloc(p/2, sizeof(int));
+	pivot = (double *) calloc(p/2, sizeof(double));
 	SLAVE( 
 		data = (unsigned int *) malloc(n * sizeof(int)); 
 	)
@@ -315,7 +317,9 @@ int main(int argc, char *argv[])
 
 	MASTER(
 		endtime = MPI_Wtime();
-		printf("%0.3f ms\n", (endtime - starttime)*1000);
+        double parTime = (endtime - starttime)*1000;
+		printf("%0.3f ms\n", parTime);
+        printf("Stats: n=%d, p=%d, threads=%d, time=%0.3f\n", n, pivot_samples, p, parTime);
 		/*
 		printf("Validating...\n");
 

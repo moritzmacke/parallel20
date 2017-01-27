@@ -81,6 +81,10 @@ int32_t random32(int32_t *state) {
 //length must be > selectCount, selectCount uneven
 void *selectPivotRandom(char *array, ITYPE *type, size_t length, uint32_t selectCount, int32_t *rstate) {
 	
+    if(selectCount > length) {
+        selectCount = (length - 1) | 0x1;
+    }
+
 //    printf("Select %d from %lu\n", selectCount, length);
 
 	void **pivots = malloc(selectCount*sizeof(void*));

@@ -21,6 +21,7 @@ struct _opts {
   uint32_t seed;
   uint32_t distribution;
   uint32_t size;
+  uint32_t pivots;
   int useDouble;
   int longValidate;
 };
@@ -32,14 +33,13 @@ int get_options(int argc, char *argv[], struct _opts *options);
 
 int main(int argc, char *argv[])
 {
-  int n;
-  void *a, *copy;
+  size_t n;
+  void *a;
 
   ITYPE type;
 
-  unsigned seed;
-
   double start, stop;
+  double parTime;
 
   struct _opts opts;
 
@@ -47,17 +47,27 @@ int main(int argc, char *argv[])
   opts.seed = 0;
   opts.distribution = RANDOM;
   opts.size = 1;
+  opts.pivots = 11;
   opts.longValidate = FALSE;
+  opts.useDouble = FALSE;
 
   if(!get_options(argc, argv, &opts)) {
     return 1;
   }
 
+  opts.pivots = opts.pivots > 100? 99 : opts.pivots | 0x1;
+
   n = opts.size;
-  seed = opts.seed;
   omp_set_num_threads(opts.threads);
 
-  printf("Number of threads %d, n=%d, seed=%d\n", opts.threads, n, seed);
+  int actualThreads;
+  #pragma omp parallel default(none) shared(actualThreads)
+  {
+    #pragma omp single
+    actualThreads = omp_get_num_threads();
+  }
+
+  printf("Number of threads %d, n=%lu, samples=%d, seed=%d\n", actualThreads, n, opts.pivots, opts.seed);
 
 
   if(opts.useDouble) {
@@ -73,9 +83,6 @@ int main(int argc, char *argv[])
     a = generate_sequence(n, type.size, generate_uint, opts.distribution, opts.seed);
   }
 
-  copy = malloc(n*type.size);
-  memcpy(copy, a, n*type.size);
-
   print_vals(a, &type, n);
 
 
@@ -89,7 +96,7 @@ int main(int argc, char *argv[])
 
   //int *pivot = &a[n/2];
 
-  quicksort(a, &type, n);
+  quicksort_omp(a, &type, n, opts.pivots);
 
 
 //  size_t split = test_partition(a, &type, n, (char *) buffer, pivot);
@@ -99,16 +106,28 @@ int main(int argc, char *argv[])
 //  printf("Split at: %lu\n", split);
   print_vals(a, &type, n);
 
+  parTime = stop-start;
+  printf("Parallel sort time %.3f ms\n", parTime);
 
-  printf("Parallel sort time %.3f ms\n",(stop-start));
-
+  int ok = 0;
   printf("Validating...\n");
   if(opts.longValidate) {
+
+    void *copy;
+
+    if(opts.useDouble) {
+      copy = generate_sequence(n, type.size, generate_double, opts.distribution, opts.seed);
+    }
+    else {
+      copy = generate_sequence(n, type.size, generate_uint, opts.distribution, opts.seed);
+    }
+
     start = get_millis();
     qsort(copy, n, type.size, type.compare);
     stop = get_millis();
 
     printf("SeqQSort time %.3f ms\n",stop-start);
+
     print_vals(copy, &type, n);
 
     size_t pos = 0;
@@ -116,31 +135,30 @@ int main(int argc, char *argv[])
     if(!arraysEqual(a, copy, n, type.size, type.compare, &pos)) {
       pos = pos/type.size;
       printf("Sorting error! At position %lu \n", pos);
-//    printf("%u %u %u\n", pos > 0 ? a[pos-1] : -1, a[pos], a[pos+1]);
-//    printf("%u %u %u\n", pos > 0 ? c[pos-1] : -1, c[pos], c[pos+1]);
     }
     else {
-      printf("OK\n");
+      ok = TRUE;
     }
+    free(copy);
   }
   else {
     if(!isSorted(a, &type, n)) {
       printf("Sorting error! \n");
     }
     else {
-      printf("OK\n");
+      ok = TRUE;
     }
   }
 
-//  free(buffer);
   free(a);
-  free(copy);
+
+  printf("Stats: threads=%d, n=%lu, samples=%d, type=%s, seed=%d, time=%.3f, status=%s\n",actualThreads, n, opts.pivots,  opts.useDouble? "double" : "int", opts.seed, parTime, ok? "OK" : "ERR");
 
   return 0;
 }
 
 void print_usage(void) {
-  printf(" -n SIZE -s SEED -g DISTRIBUTION -t NUM_THREADS -d (=use doubles) \n");
+  printf(" -n SIZE -s SEED -g DISTRIBUTION -t NUM_THREADS -p PIVOT_SAMPLES -d (=use doubles) \n");
 }
 
 int get_options(int argc, char *argv[], struct _opts *options) {
@@ -149,7 +167,7 @@ int get_options(int argc, char *argv[], struct _opts *options) {
   int c;
 
 
-  while ((c = getopt(argc, argv, "n:s:t:g:dv")) != -1) {
+  while ((c = getopt(argc, argv, "n:s:t:g:p:dv")) != -1) {
     switch (c) {
       case 'n':
         options->size = (uint32_t) strtol(optarg, NULL, 0);
@@ -162,6 +180,9 @@ int get_options(int argc, char *argv[], struct _opts *options) {
         break;
       case 'g':
         options->distribution = (uint32_t) strtol(optarg, NULL, 0);
+        break;
+      case 'p':
+        options->pivots = (uint32_t) strtol(optarg, NULL, 0);
         break;
       case 'd':
         options->useDouble = TRUE;

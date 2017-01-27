@@ -417,63 +417,7 @@ static void *selectPivot(void *array, ITYPE *type, size_t length) {
   return pivot;
 }
 */
-/*
-static void *selectRandPivot(void *array, ITYPE *type, size_t length, int32_t *rstate) {
 
-  int third = length/3; //array must be longer than 3...
-
-  void *first = (void *) (((char *) array) + (random32(rstate)%third)*type->size);
-  void *mid = (void *) (((char *) array) + (third + random32(rstate)%third)*type->size);
-  void *last = (void *) (((char *) array) + ((length - third - 1) + random32(rstate)%third)*type->size);
-
-//  void *first =  array;
-//  void *mid = (void *) (((char *) array) + (third + rand()%third)*type->size);
-//  void *last = (void *) (((char *) array) + (length - 1)*type->size);
-
-  void *pivot = first;
-
-//  printf("Pivot candidates: %d, %d, %d\n", *((int *) first) , *((int *) mid), *((int *) last));
-
-  if(type->compare(first, last) > 0) {
-    //first > last
-    if(type->compare(first, mid) > 0) {
-      //first > last, mid
-      if(type->compare(mid, last) > 0) {
-        //first > mid > last
-        pivot = mid;
-      }
-      else {
-        //first > last >= mid
-        pivot = last;
-      }
-    }
-    else {
-      //mid >= first > last
-    }
-  }
-  else {
-    //last >= first
-    if(type->compare(first, mid) > 0) {
-      //last >= first > mid
-    }
-    else {
-      //last, mid >= first
-      if(type->compare(last, mid) > 0) {
-        //last > mid >= first
-        pivot = mid;
-      }
-      else {
-        //mid >= last >= first
-        pivot = last;
-      }
-    }
-  }
-
-//  printf("Chose: %d\n", *((int *) pivot));
-
-  return pivot;
-}
-*/
 static void qs(void *array, ITYPE *type, size_t length, uint32_t chunksize, int32_t rstate) {
 
 #ifdef SEQUENTIAL

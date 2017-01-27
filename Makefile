@@ -1,7 +1,7 @@
 INC = src/include
 PCG = src/pcg
 SRC = src
-FLAGS = -Wall -pedantic -O3 -I$(INC) -I$(SRC)
+FLAGS = -Wall -pedantic -std=gnu99 -O3 -I$(INC) -I$(SRC)
 
 vpath %.c $(SRC)
 .DEFAULT_GOAL := all
@@ -22,7 +22,11 @@ qs_cilk1: main_cilk.c sort_cilk1.c common.c validate.c generate.c pcg/pcg_basic.
 	gcc $(FLAGS) -fcilkplus $+ -o $@
 	
 qs_mpi: main_mpi.c common.c generate.c validate.c pcg/pcg_basic.c
-	mpicc $(FLAGS) -o $@ -O3 $+ 
+	mpicc $(FLAGS) -o $@ $+ -lm
+
+qs_mpi2: sort_mpi2.c common.c validate.c generate.c pcg/pcg_basic.c
+	mpicc $(FLAGS) -o $@ $+ 
+
 
 .PHONY: all
 all: qs_omp qs_cilk0 qs_cilk1 qs_cilk2 qs_cilk2_seq qs_mpi

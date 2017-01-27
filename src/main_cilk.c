@@ -38,12 +38,13 @@ static int get_options(int argc, char *argv[], struct _opts *options);
 
 int main(int argc, char *argv[])
 {
-  int n;
-  void *a, *copy;
+  size_t n;
+  void *a;
 
   ITYPE type;
 
   double start, stop;
+  double parTime;
 
   struct _opts opts;
 
@@ -51,7 +52,7 @@ int main(int argc, char *argv[])
   opts.seed = 0;
   opts.distribution = RANDOM;
   opts.cutoff = 1000;
-  opts.size = 1;
+  opts.size = 100000;
   opts.useDouble = FALSE;
   opts.longValidate = FALSE;
 
@@ -76,18 +77,20 @@ int main(int argc, char *argv[])
     a = generate_sequence(n, type.size, generate_uint, opts.distribution, opts.seed);
   }
 
-  copy = malloc(n*type.size);
-  memcpy(copy, a, n*type.size);
+//  copy = malloc(n*type.size);
+//  memcpy(copy, a, n*type.size);
 
-  
+
+  int w = 0;  
+
 #ifndef SEQUENTIAL
 //  __cilkrts_set_param("nworkers","");
   // check how many workers are available
-  int w = __cilkrts_get_nworkers();  
+  w = __cilkrts_get_nworkers();  
   printf("Total number of workers: %d\n",w);
 #endif
 
-  printf("Length: %d (%s), Chunksize: %d\n", n, opts.useDouble? "doubles" : "ints", opts.cutoff);
+  printf("Length: %lu (%s), Chunksize: %d\n", n, opts.useDouble? "doubles" : "ints", opts.cutoff);
   print_vals(a, &type, n);
 
   start = get_millis();
@@ -98,22 +101,29 @@ int main(int argc, char *argv[])
 
   print_vals(a, &type, n);
 
+  parTime = stop-start;
+  printf("ParQSort time %.3f ms\n", parTime);
 
-  // verify
-//  if(!validPartition(a, copy, n, sizeof(int), pivot, compare_ints)) {
-  if(!isSorted(a, &type, n)) {
-    printf("Result not sorted correctly.\n");
-  }
-
-  printf("ParQSort time %.3f ms\n",stop-start);
+  int ok = 0;
 
   printf("Validating...\n");
   if(opts.longValidate) {
+
+    void *copy;
+
+    if(opts.useDouble) {
+      copy = generate_sequence(n, type.size, generate_double, opts.distribution, opts.seed);
+    }
+    else {
+      copy = generate_sequence(n, type.size, generate_uint, opts.distribution, opts.seed);
+    }
+
     start = get_millis();
     qsort(copy, n, type.size, type.compare);
     stop = get_millis();
 
     printf("SeqQSort time %.3f ms\n",stop-start);
+
     print_vals(copy, &type, n);
 
     size_t pos = 0;
@@ -121,24 +131,24 @@ int main(int argc, char *argv[])
     if(!arraysEqual(a, copy, n, type.size, type.compare, &pos)) {
       pos = pos/type.size;
       printf("Sorting error! At position %lu \n", pos);
-//    printf("%u %u %u\n", pos > 0 ? a[pos-1] : -1, a[pos], a[pos+1]);
-//    printf("%u %u %u\n", pos > 0 ? c[pos-1] : -1, c[pos], c[pos+1]);
     }
     else {
-      printf("OK\n");
+      ok = TRUE;
     }
+    free(copy);
   }
   else {
     if(!isSorted(a, &type, n)) {
       printf("Sorting error! \n");
     }
     else {
-      printf("OK\n");
+      ok = TRUE;
     }
   }
 
   free(a);
-  free(copy);
+
+  printf("Stats: threads=%d, n=%lu, chunk=%d, type=%s seed=%d, time=%.3f, status=%s\n", w, n, opts.cutoff, opts.useDouble? "double" : "int", opts.seed, parTime, ok? "OK" : "ERR");
 
   return 0;
 }
