@@ -1,0 +1,72 @@
+
+OpenMP & Cilk: For all implementations a similar approach was used, utilizing prefix sums to parallelize the partition step of the Quicksort algorithm. Further the data is partitioned in the same way, between separation elements less than and equal from those greater than the pivot. The data size is therefore reduced only by one in the worst case, which is encountered if all elements are equal. These algoritms therefore are not suitable for data with more than a very small amount of equal elements. This issue could have easily been remedied in the simpler implementaion variant but was left as is, since it was difficult to fix in the cilk2 variant, and test were conducted only on uniform random data in the range [0-n]. Furthermore all variants fall back onto the libc qsort function for sequentially sorting data as this was found to be significantly faster than self roled attempts. 
+Choosing a fixed pivot, from the start, middle or end, or the median of those three proved to behave very badly in the case of sorted sequences, therefore the median of a number of randomly chosen elements is chosen for partitioning in all implementations. 
+All variants are generic and can be used to sort any type if provided with a suitable compare function and type size, though only (unsigned) integer and double types were tested.
+
+
+OpenMP:
+The OpenMP version uses a simple approach using prefix sums in a recursive implementation of Quicksort.
+At the start of the quicksort function the number of threads participating on this step is checked and if there is more than one the array is partitioned in parallel.
+In the partition step each processor gets a chunk of the array and partitions it into a buffer of size n/p, counts the number of less than or equal elements and stores it in a shared array. Thereafter it needs to synchronize with the other processors and the exclusive prefix sum is calculated for each of the chunks, which allows each processor to write both the smaller-equal and greater parts from the buffer back into the correct section of the array.
+The prefix step is currently implemented sequentially, since parallelisation would not pay off with the small number of processors involved.
+After the partition step is concluded all elements are on the right side of the array and the pivot is switched in between.  Since the partition work is divided into (essentially) equal sized chunks in both partition phases each processor has to do an equal amount of work in regards to comparisons, memory reads and writes. The partition step should therefore be balanced, regardless of the choise of pivot, though this does not mean the algorithm as a whole is balanced, which depends on the quality of the split.
+The available processors are subsequently split into lower and upper halves, attempting to do some crude balancing depending on the size of the two subsequences, and the quicksort function is called recursively with the desired number of processors per half.
+Once the number of threads taking part drops to one the algorithm switches to a Quicksort variant with sequential partition but tries to keep some parallelism by using tasks for the recursive calls. Once the array size drops below a threshold it is sorted purely sequentially.
+
+Theory: 
+
+
+Cilk:
+First Variant (cilk0):
+This Algorithm functions very similar to the OpenMP variant. During partitioning the data is written into a buffer array and then back into the original array. It therefore uses O(n) additional space, plus O(c) in each partition step, where c is the number of chunks = number of cilk spawns. 
+The main difference from the OpenMP version lies in how the cilk system operates, as additional workers can only be spawned by function calls. Two passes are needed for partitioning between which synchronization is necessary. For each pass the work is divided with recursive calls and cilk_spawn until it is small enough for sequential processing. The downside to this approach is that the overhead to spawn the cilk workers is incurred thwice and there is no guarantee a worker in the second pass is assigned a chunk it worked on in the first pass. It is however by far the easiest to implement and requires no additional synchonization except the one provided by Cilk. The process of spawning the cilk tasks is also used to calculate the prefix sum required in the second pass. While the assigned chunks have equal size, generally more tasks are spawned than availabe processors and the balancing in detail is left to the Cilk system.
+Theory: ...
+Second variant (cilk1):
+The motivation for this variant was trying to minimize the number of writes to memory and seeing if this improves performance over the first variant. It operates in the same way using two arrays, but instead of partitioning the assigned chunk in the first pass each worker only counts the number of LE elements. The prefix sum is calculated and in the second pass the data is written out to the second array, each worker knowing where to write its elements thanks to the prefix sum. 
+Then the roles of the arrays are switched for the following recursive calls to quicksort. Part of the data may end up in the second array after the parallel phase ends therefore first has to be moved back to the main array, this can be combined with a partition step however so the overhead should not be too large. Overall the performance of this variant turned out to be disappointing though, see benchmarks...
+Third variant (cilk2):
+Focus here was to minimize the memory used and attempt to sort the data in place. The only additional memory required is the one for holding the chunk information. Like in the cilk0 variant in a first pass each chunk is partitioned, counted and used to calculate a prefix. The side to which smaller and bigger elements are partitioned is alternated so as to generate less and longer runs, though it is not known whether this actually has a performance impact. The essential difference lies in the second pass. First the amount of swaps necessary to finish the partitioning is calculated and then divided evenly among workers (as long as there is more than a minimum). Each worker then computes the two locations above and below the split point (final pivot location), to start swaping elements. Using the partial prefix sums computed in the first pass this can be accomplished in O(log c) time. Worst case? (...) This variant turned out to perform the best.
+Theory: ...
+
+Machines:
+
+OpenMP & Cilk
+The 48 core "saturn" server was made available to the students by the university. However by the time all programs were finished and bug free the server was hopelessly overburdened and no consistents results could be gathered. Therefore we decided to rent a server instance from Amazon EC2 for a few hours to run our tests on. This was a c4 compute optimized instance with 36 (virtualized) cores, the physical underlying machine uses Intel Xeon E5-2666 v3 processors with 10 cores per CPU. Sporadic testing during development and incomplete tests on the saturn server showed comparable scaling performance to our final results, therefore we believe this to have been a suitable substitute.
+
+MPI:
+...
+
+
+Benchmark testing:
+
+Tests were conducted on sequences of randomly generated positive numbers in the range [0-n], where n is the length of the sequence. For reasons of time most tests were run only on different sizes of integer type arrays. Each test was repeated 20 times, which turned out to be on the low side for some tests, with noise still being quite evident. However it allowed for a wider range of coverage without taking an excessive amount of time. The cilk variants need an additional argument in the chunksize, which was fixed to n/200 -> 200 chunks for the first partition step for most tests. This is certainly not optimal for all sizes and processor counts and it is expected that performance could be improved by more carefully chosen numbers.
+
+OpenMP & Cilk
+(graphic compare 200mil?)
+
+Openmp: It is clear that something has gone wrong with the tests for the OpenMP program. with a low number of cores the speedup is superlinear, this comes not from any kind of superior algorithm. The partition part especially is actually an order of magnitude slower than standard quicksort partition when executed sequentially. What we think happened is that more cores were recruited than requested, possibly in the phase after parallel partition other processes besides those involved in partitioning could pick up the generated tasks. What is evident in any case is that the program doesn't scale very well at all at higher number of processes.
+Cilk: The in-place variant cilk2 is clearly superior to the other two and shows some nice scaling behaviour even if leveling off at the end is evident. Cilk0 performs quite well also considering it is a very simple and obvious first implementation where not much thought has been spent on optimization. The performace of cilk1 is a disappointment, but not unexpected after local testing had already shown it to be inferior. Still there was some hope that with a high number of processes there would be a relative gain, but evidently this did not materialize.
+
+(further graphs?)
+
+(chunksize graph?)
+There performance of cilk2 is good but optimization is possible through chosing the right chunksize. Graph xxx shows there is a sweet spot. One problem of the current implementation is that the chunksize operator is used to determine the number of chunks in a parallel partition operation but also to cut off and continue sequentially. An improvement would be to continue parallel quicksort with sequential partition after parallel partition ceases paying off and continuing in this way until a smaller cutoff is reached similar to the OpenMP version. Preliminary tests with such a version indeed showed some gains but because of time constraints this was not persued further.
+
+(..)
+
+
+
+MPI
+...
+
+
+
+
+
+
+
+
+
+
+
+
