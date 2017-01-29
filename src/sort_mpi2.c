@@ -1,5 +1,3 @@
-/* TUW, October 2011 */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -12,8 +10,6 @@
 #include "validate.h"
 #include "common.h"
 #include "generate.h"
-
-#define HELLO 1234 // tag for control messages
 
 struct _opts {
   uint32_t seed;
@@ -57,9 +53,6 @@ size_t partition(char *array, ITYPE *type, size_t length, void *pivot) {
     return split;
 }
 
-//selectPivotRandom(char *array, ITYPE *type, size_t length, uint32_t selectCount, int32_t *rstate)
-
-
 void collectSamples(char *array, ITYPE *type, size_t length, char *buffer, uint32_t selectCount, int32_t *rstate) {
 
     if(selectCount <= length) {
@@ -82,24 +75,6 @@ void collectSamples(char *array, ITYPE *type, size_t length, char *buffer, uint3
       }
     }
 }
-/*
-void parallelSelectPivot(void *localPivot, void *pivot, ITYPE *type, int rank, int size, MPI_Comm comm) {
-  
-  int pivots[size];
-
-  MPI_Allgather(localPivot, 1, MPI_INT, pivots, 1, MPI_INT, comm);
-  
-  qsort(pivots, size, type->size, type->compare);
-
-  printf("Rank %d got: ", rank);
-  for(int i=0; i<size; i++) {
-    printf("%d ", pivots[i]);
-  }
-  printf("\n");
-
-  copy((char *) &pivots[size/2], pivot, type->size);
-}
-*/
 
 void parallelSelectPivot(void *localSamples, void *pivot, ITYPE *type, int samples, int rank, int size, MPI_Comm comm) {
   
@@ -108,12 +83,6 @@ void parallelSelectPivot(void *localSamples, void *pivot, ITYPE *type, int sampl
   MPI_Allgather(localSamples, samples, MPI_INT, pivots, samples, MPI_INT, comm);
   
   qsort(pivots, size*samples, type->size, type->compare);
-
-/*  printf("Rank %d got: ", rank);
-  for(int i=0; i<size*samples; i++) {
-    printf("%d ", pivots[i]);
-  }
-  printf("\n");*/
 
   copy((char *) &pivots[(size*samples)/2], pivot, type->size);
 }
@@ -125,8 +94,6 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
 
     MPI_Comm_size(comm,&comSize);
     MPI_Comm_rank(comm,&comRank);
-
-//    int originalRank = comRank;
 
     while(comSize > 1) {
 
@@ -143,8 +110,6 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
         MPI_Bcast(pivot, 1, MPI_INT, 0, comm);
       }
       else {
-//        void *localPivot = selectPivotRandom(local, type, *local_length, samplesPerNode, &rstate);
-//        printf("Rank %d local pivot: %d\n", comRank, *((int *)localPivot));
 
         int localSamples[samplesPerNode];
         collectSamples(local, type, *local_length, (char *) localSamples, samplesPerNode, &rstate);
@@ -169,8 +134,6 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
       size_t prefixSumGT = comRank*perNode - prefixSumLE;
       uint64_t totalGT = total_length - totalLE;  //
 
-//      printf("Rank %d: pivot: %d LE: (%lu/%lu), GT: (%lu/%lu), pf: %lu/%lu/%lu\n", comRank, *((int *)pivot), countLE, totalLE, countGT, totalGT, prefixSumLE, prefixSumGT, total_length);
-
       //Find out how to split up
       double split = totalLE/(double)total_length;
       int leftNodes = (split*comSize) + 0.5;
@@ -182,7 +145,7 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
       int perRightNode = totalGT/rightNodes;
 
       if(comRank == 0) {
-          printf("Split: %2f Left: %d(%d/node) Right: %d(%d/node) \n", split, leftNodes, perLeftNode, rightNodes, perRightNode);
+          printf("[%.3f] split: %2f Left: %d(%d/node) Right: %d(%d/node) \n", MPI_Wtime(), split, leftNodes, perLeftNode, rightNodes, perRightNode);
       }
 
 
@@ -227,13 +190,6 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
           capacity = (tgtNode == rightNodes - 1) ? totalGT - tgtNode*perRightNode : perRightNode;
       }
       
-
-//      printf("Rank %d sends: ", comRank);
-      for(int i=0; i<comSize; i++) {
-//          printf("%d to %d from [%d], ", sendcounts[i], i, senddisp[i]);
-      }
-//      printf("\n");
-
       //Notify others how much they should expect
       MPI_Alltoall(sendcounts, 1, MPI_INT, recvcounts, 1, MPI_INT, comm);
       
@@ -267,8 +223,6 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
       //Send & recieve data
       MPI_Alltoallv(local, sendcounts, senddisp, MPI_INT, buffer, recvcounts, recvdisp, MPI_INT, comm);
 
-  //    print_vals(buffer, type, newLength);
-
       *local_length = newLength;
       free(local);
       local = (char *) buffer;
@@ -279,16 +233,10 @@ void *parallelPartition(char *local, ITYPE *type, int *local_length, size_t tota
       MPI_Comm_split(comm, comRank < leftNodes? 0 : 1, comRank, &newComm);
 
       MPI_Comm_free(&comm);
-      
       comm = newComm;
-
-      
-//      int oldRank = comRank;
 
       MPI_Comm_rank(comm, &comRank);
       MPI_Comm_size(comm, &comSize);
-
-//      printf("Rank %d now %d of %d\n", oldRank, comRank, comSize);
 
     }
 
@@ -326,7 +274,7 @@ int main(int argc, char *argv[])
   opts.seed = 0;
   opts.distribution = RANDOM;
   opts.size = 100;
-  opts.samples = 0;
+  opts.samples = 11;
   opts.useDouble = FALSE;
   opts.longValidate = FALSE;
 
@@ -371,7 +319,6 @@ int main(int argc, char *argv[])
       int rest = local_length - perNode;
       char *t = (char *) local;
       MPI_Recv(&t[perNode*type.size], rest, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-//      printf("%d got last %d elems\n", rank, rest);
     }
   }
 
@@ -400,7 +347,7 @@ int main(int argc, char *argv[])
     for(int i=0; i<size; i++) {
         recvdisp[i] = offset;
         offset += recvcounts[i];
-        printf("Rank %d returns %d, ", i, recvcounts[i]);
+        printf("R%03d returns %d%s", i, recvcounts[i], (i < size-1) ? ", " : "");
     }
     printf("\n");
 
@@ -416,7 +363,8 @@ int main(int argc, char *argv[])
 
       
   MPI_Finalize();
-   
+  
+  int ok = 0;
   if(rank ==0) {
 
     printf("Validating...\n");
@@ -432,7 +380,7 @@ int main(int argc, char *argv[])
         printf("Sorting error.\n");
       }
       else {
-        printf("OK.\n");
+        ok = 1;
       }
       free(copy);
     }
@@ -441,12 +389,13 @@ int main(int argc, char *argv[])
         printf("Sorting error! \n");
       }
       else {
-        printf("OK.\n");
+        ok = 1;
       }
     }
 
     //print_vals(a, &type, total_length);
     printf("MPI time %.3f ms\n", parTime*1000);
+    printf("Stats: n=%lu, p=%d, threads=%d, seed=%d, time=%0.3f, status=%s\n", total_length, opts.samples, size, opts.seed, parTime*1000, ok ? "OK" : "ERR");
     free(a);
   }
 

@@ -40,7 +40,7 @@ int cmpfunc(const void * a, const void * b)
 
 /* Pivot picking strategy */
 //enum pivot_t { MANY_RANDOM, ONE_RANDOM, WORST_CASE };
-static int pivot_samples = 5;
+static int pivot_samples = 5;   //Now: 0 = One of p; > 0 = samples per p
 
 /* MPI Error handler:
  * Provides minimal error information, aborts process.
@@ -63,7 +63,7 @@ void eh(MPI_Comm *comm, int *err,...)
 }
 
 /* Pick pivot element in the data array.
- * Choose 5 elements at random, median is the pivot.
+ * Choose number of elements at random, average is the pivot.
  */
 double pick_pivot()
 {
@@ -74,8 +74,8 @@ double pick_pivot()
 			sum += data[rand() % data_len];
 		}
 		return sum / pivot_samples;
-	} else { // WORST_CASE
-		return 0;
+	} else { 
+		return data[rand() % data_len];
 	}
 }
 
@@ -114,8 +114,6 @@ void qsort_partition()
 	
 	while(pPerSection > 1) {
 
-//        printf("Rank %d data len %d\n", rank, data_len);
-
 		/* Every processor computes pivot for its data slice */
 		double local_pivot = data_len == 0? NAN : pick_pivot();
 	
@@ -130,7 +128,12 @@ void qsort_partition()
 					} else {  //MASTER
                         received_pivot = local_pivot;
 					}
-                    pivot[k] += received_pivot != NAN? received_pivot/pPerSection : 0;
+                    if(pivot_samples == 0) { //Just choose one (last) per Section
+                        pivot[k] = received_pivot != NAN? received_pivot : 0;
+                    }
+                    else { //Average of Pivots per Section
+                        pivot[k] += received_pivot != NAN? received_pivot/pPerSection : 0;
+                    }
 				}
 			}
 		) SLAVE(
@@ -263,7 +266,12 @@ int main(int argc, char *argv[])
 	} else {
 		/* Use sequential qsort on master processor if dataset is not big enough */
 		MASTER(
+            starttime = MPI_Wtime();
 			qsort(input, n, sizeof(int), cmpfunc);
+    		endtime = MPI_Wtime();
+    		printf("%0.3f ms\n", (endtime-starttime)*1000);
+            printf("Stats: n=%d, p=N/A, threads=1, time=%0.3f\n", n, (endtime-starttime)*1000);
+
 		)
 		goto End;
 	}

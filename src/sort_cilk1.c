@@ -18,13 +18,8 @@ typedef struct _chunk {
   char *baseArray;
   size_t startIndex;
   size_t count_le;
-//  size_t count_lt;
-//  size_t count_gt;
   size_t prefix_le;
-//  size_t prefix_lt;
-//  size_t prefix_gt;
   size_t count_total;
-  size_t item_size;
 } CHUNK;
 
 //
@@ -57,9 +52,7 @@ void parallelPartitionPass1(char *array, ITYPE *type, int start, int size, CHUNK
     c->startIndex = start;
     c->count_total = size;
     c->count_le = count_le;
-//    c->prefix_le = count_le;
     chunks[1].prefix_le = count_le;
-
   }
 }
 
@@ -101,9 +94,6 @@ void parallelPartitionPass2(char *out, ITYPE *type, size_t total_le, CHUNK *chun
 
 size_t parallelPartition(void *in, void *out, ITYPE *type, size_t length, size_t num_chunks, int *pivot) {
 
-//  printf("before partition\n");
-//  print_vals0(in, type, length);
-
   CHUNK *chunks = malloc((num_chunks+1)*sizeof(CHUNK));
 
   //init first pf
@@ -115,58 +105,40 @@ size_t parallelPartition(void *in, void *out, ITYPE *type, size_t length, size_t
   chunks[num_chunks].count_total = 0;
 
   size_t total_le = chunks[num_chunks].prefix_le;
-//  printf("total_le: %lu\n", total_le);
-  
-	if(total_le < length && total_le > 0) {	//all le or all gt?
+
+  if(total_le < length && total_le > 0) {	//all le or all gt?
     parallelPartitionPass2((char *) out, type, total_le, chunks, num_chunks, 0, pivot);
   }
 
   free(chunks);
-
-//  print_chunks(chunks, num_chunks);
-
-//  printf("after partition\n");
-//  print_vals0(out, type, length);
 
   return total_le;
 }
 
 void qs(char *a, char *b, ITYPE *type, size_t length, size_t chunk_size, int32_t rstate, int depth) {
 
-//    printf("qs start\n");
-
   size_t num_chunks = (length + chunk_size - 1)/chunk_size;
   
-//  printf("size: %lu, %lu chunks\n", size, num_chunks);
-
-
   if(num_chunks > 1) {
 
     void *pivot = selectPivotRandom(a, type, length, 7, &rstate);//selectPivot(a, type, length);
     swap(&a[0],(char *) pivot, type->size); //swap pivot to beginning
     pivot = (void *) &a[0];
 
-//    printf("\nPivot: %d\n", a[0]);
-
     size_t size_left = parallelPartition(&a[type->size], &b[type->size], type, length-1, num_chunks, pivot);
     size_t size_right = length - size_left - 1;
 
 //    printf("Split at %lu\n", size_left);
-
 
     //move pivot in place...
     copy(&b[size_left*type->size], &b[0], type->size);
     copy(&a[0], &b[size_left*type->size], type->size);
     copy(&a[0], &a[size_left*type->size], type->size);
 
-
     cilk_spawn qs(b, a, type, size_left, chunk_size, rstate, depth+1);
     cilk_spawn qs(&b[(size_left+1)*type->size], &a[(size_left+1)*type->size], type, size_right, chunk_size, rstate, depth+1);
-
-
   }
   else if(num_chunks != 0) {
-//    printf("QS sequential\n");
     
     if(depth%2 == 1) {
       //move to original array...
