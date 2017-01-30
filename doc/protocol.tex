@@ -52,6 +52,7 @@
 \begin{document}
 
 \maketitle
+\tableofcontents
 \section{Abstract}
 
 We present three different implementations of a parallelized Quicksort algorithm in MPI, Cilk and OpenMP. By testing the implementations on multi-core systems we aim to compare the different algorithms in terms of runtime, speedup compared to the sequential algorithm as well as efficiency (speedup per thread).
@@ -106,27 +107,25 @@ Focus here was to minimize the memory used and attempt to sort the data in place
 	\caption{Runtime, efficiency and speedup results of the OpenMP/Cilk implementations for $n=10^{7}$.}
 \end{figure}
 \begin{figure}[h]
-	\includegraphics[width=0.9\textwidth]{img/omp_cilk_100mil.pdf}
-	\caption{Runtime, efficiency and speedup results of the OpenMP/Cilk implementations for $n=10^{8}$.}
+	\includegraphics[width=0.9\textwidth]{img/omp_cilk_double_comparison_100mil.pdf}
+	\caption{Speedup comparison integer vs. double for $n=10^{8}$.}
 \end{figure}
 \begin{figure}[h]
-	\includegraphics[width=0.9\textwidth]{img/omp_cilk_double_comparison_100mil.pdf}
-	\caption{Speedup comparison integer vs. double for  $n=10^{8}$.}
+	\includegraphics[width=0.9\textwidth]{img/omp_cilk_speedup_10p.pdf}
+	\caption{Speedup comparison with 10 processors for various data sizes $n$.}
 \end{figure}
 
 \noindent\textbf{Runtime, Speed and Efficiency}\newline
-As expected, the runtime of the algorithm stagnates at about 10 threads due to the implementation overhead and hardware limitations on the test server. After this point, the results for the OpenMP implementation get noticeably worse than the Cilk counterparts (most evident from \emph{Figure 1}. This behavior of the OpenMP implementation does not seem to be accelerated by higher input size, however. In \emph{Figure 3}, the OpenMP implementation is almost as fast as the Cilk implementation for a higher number of threads. The OpenMP implementation is actually much faster than the Cilk implementation for a lower number of threads. It can be concluded that OpenMP is the preferred implementation method for a reasonable amount of threads, at least for this particular algorithm.
+As expected, the runtime of the algorithm stagnates at about 10 threads due to the implementation overhead and hardware limitations on the test server. After this point, the results for the OpenMP implementation get noticeably worse than the Cilk counterparts (most evident from \emph{Figure 1}. This behavior of the OpenMP implementation does not seem to be accelerated by higher input size, however. In \emph{Figure 2}, the OpenMP implementation already performs much better for a higher number of threads. In our tests we found that for even bigger data sizes the OpenMP implementation would be almost as fast as the Cilk implementations. However, it is clear that something has gone wrong with the tests for the OpenMP program. with a low number of cores the speedup is superlinear, this comes not from any kind of superior algorithm. The partition part especially is actually an order of magnitude slower than standard Quicksort partition when executed sequentially. What we think happened is that more cores were recruited than requested, possibly in the phase after parallel partition other processes besides those involved in partitioning could pick up the generated tasks. What is evident in any case is that the program doesn't scale very well at all at higher number of processes.
 
-There is some odd behavior for the OpenMP implementation in \emph{Figure 3} where the runtime results are much higher than expected and the efficiency results are impossible. We do not know what has caused this.\newline
+The in-place variant Cilk2 is clearly superior to the other two and shows some nice scaling behaviour even if leveling off at the end is evident. Cilk0 performs quite well also considering it is a very simple and obvious first implementation where not much thought has been spent on optimization. The performace of Cilk1 is a disappointment, but not unexpected after local testing had already shown it to be inferior. Still there was some hope that with a high number of processes there would be a relative gain, but evidently this did not materialize.
+
+\emph{Figure 4} shows the speedup for different data sizes with a fixed number of threads $p=10$. It is not unexpected that the speedup would be higher for bigger $n$ because the time overhead of the parallel implementation is bigger relative to the duration of the sequential algorithm for lower $n$.\newline
 
 \noindent\textbf{Comparison - Integer and Double Input}\newline
-We have also compared the speedup of the Cilk2 and OpenMP implementations for $n=10^{8}$ for integer and double arrays. The results are shown in \emph{Figure 4}. As expected, the performance is very similar, with the OpenMP implementation being about 5\% slower when doubles are used.
+We have also compared the speedup of the Cilk2 and OpenMP implementations for $n=10^{8}$ for integer and double arrays. The results are shown in \emph{Figure 3}. As expected, the performance is very similar, with the OpenMP implementation being about 5\% slower when doubles are used.
 \section{MPI}
 \subsection{Algorithm}
-\begin{figure}[h]
-	\includegraphics[width=0.8\textwidth]{img/mpi_algorithm.pdf}
-	\caption{Example of the partitioning for the parallel Quicksort implementation for p = 8.}
-\end{figure}
 The partitioning algorithm for our MPI implementation roughly works as follows:
 \begin{enumerate}
 	\item Divide input into (roughly) $\frac{n}{p}$ elements per process.
@@ -166,10 +165,10 @@ The implementation works best for randomized input. If the array is pre-sorted, 
 \end{figure}
 
 \noindent\textbf{Runtime, Speed and Efficiency}\newline
-\emph{Figure 7} shows the runtime results of our implementation and \emph{Figure 8} and \emph{Figure 9} the efficiency and speedup results. Even for a high number of processes a respectable speedup can be achieved, at least until about $p=256$ where the communication overhead decreases the performance significantly. As evident from the efficiency results, the algorithm scales more poorly the higher the number of processes is. At $p=32$ and above the algorithm is obviously inefficient because the number of physical cores on the system is exceeded by the number of processes.
+\emph{Figure 5} shows the runtime results of our implementation and \emph{Figure 6} and \emph{Figure 7} the efficiency and speedup results. Even for a high number of processes a respectable speedup can be achieved, at least until about $p=256$ where the communication overhead decreases the performance significantly. As evident from the efficiency results, the algorithm scales more poorly the higher the number of processes is. At $p=32$ and above the algorithm is obviously inefficient because the number of physical cores on the system is exceeded by the number of processes.
 \newline\newline
 \textbf{Pivot Selection}\newline
-As noted above, in our implementation the median of 5 random elements is sent to the master, which calculates the median of all received pivots from a set of processors and sends this new pivot back to the set of processors. We tested our implementation with $n=10^{8}$ and different numbers of elements randomly selected for the calculation of the pivot. We also tested the case that the pivot is always 0. This is the worst case scenario in which every element is received by processor 0 and the algorithm degenerates into sequential Quicksort with the additional overhead of the partitioning.
+As noted above, in our implementation the median of 5 random elements is sent to the master, which calculates the median of all received pivots from a set of processors and sends this new pivot back to the set of processors. We tested our implementation with $n=10^{8}$, $p=128$ and different numbers of elements randomly selected for the calculation of the pivot. The results are shown in \emph{Figure 8} We also tested the case that the pivot is always 0. This is the worst case scenario in which every element is received by processor 0 and the algorithm degenerates into sequential Quicksort with the additional overhead of the partitioning. In this case, the program runs 30\% slower than the sequential algorithm.
 \begin{figure}[h]
 	\includegraphics[width=0.6\textwidth]{img/mpi_pivot.pdf}
 	\caption{Runtime for $n=10^{8}$ and 128 processes, different number of elements to compute pivot.}
