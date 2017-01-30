@@ -9,6 +9,7 @@
 \usepackage{ifthen}
 \usepackage{paralist}
 \usepackage{enumitem}
+\usepackage{placeins}
 
 \parskip        0mm
 \oddsidemargin  0in
@@ -84,8 +85,9 @@ The available processors are subsequently split into lower and upper halves, att
 Once the number of threads taking part drops to one the algorithm switches to a Quicksort variant with sequential partition but tries to keep some parallelism by using tasks for the recursive calls. Once the array size drops below a threshold it is sorted purely sequentially.
 
 \subsection{Analysis}
-Every partition takes $n/p + p$ time, since both $n$ and $p$ are expected to about halve each step every spends $(n/p)\log p + p$ time here. Assuming we are somewhat balanced each processor then takes (n/p)*log(n/p) time to sort the data sequentially. This gives an overall time of $Tpar$ = $O(n\log (n/p)/p + (n\log p)/p + p)$ = $O(n\log (n/p) + p)$. With unlimited processors the first term tends towards 0, so $T_{\infty}$ = p, with a parallelism of $O((n\log n)/p)$. 
-The total work performed by the algorithm is $p(n/p)\log(n/p)$ for sequential sorting, $n*\log p$ for partitioning the data and $p*\log p$ for pivot selection and prefix sums. Hence $Wpar$ = $n\log(n/p) + n*\log p + p\log p$ = $n*\log n + p\log p$ = $O(n\log n)$ for fixed p, the algorithm should therefore be work optimal. It is cost optimal for $O(n) = p^2$.
+Every partition takes $\frac{n}{p} + p$ time, since both $n$ and $p$ are expected to about halve each step every spends $(\frac{n}{p})\log p + p$ time here. Assuming we are somewhat balanced each processor then takes $(\frac{n}{p})\log(\frac{n}{p})$ time to sort the data sequentially. This gives an overall time of $T_{par}$ = $O(n\log (\frac{n}{p})/p + (n\log p)/p + p)$ = $O(n\log (\frac{n}{p}) + p)$. With unlimited processors the first term tends towards 0, so $T_{\infty}$ = p, with a parallelism of $O((n\log n)/p)$. 
+
+The total work performed by the algorithm is $p(\frac{n}{p})\log(\frac{n}{p})$ for sequential sorting, $n*\log p$ for partitioning the data and $p\log p$ for pivot selection and prefix sums. Hence $W_{par}$ = $n\log(\frac{n}{p}) + n*\log p + p\log p$ = $n*\log n + p\log p$ = $O(n\log n)$ for fixed p, the algorithm should therefore be work optimal. It is cost optimal for $O(n) = p^2$.
 
 
 \section{Cilk}
@@ -101,8 +103,9 @@ Then the roles of the arrays are switched for the following recursive calls to Q
 \textbf{Third Variant (cilk2)}\newline
 The focus here was to minimize the memory used and attempt to sort the data in place. The only additional memory required is the one for holding the chunk information. Like in the cilk0 variant in a first pass each chunk is partitioned, counted, and used to calculate a prefix sum. The side to which smaller and bigger elements are partitioned is alternated so as to generate less and longer runs, though it is not known whether this actually has a performance impact. The essential difference lies in the second pass. First the amount of swaps necessary to finish the partitioning is calculated and then divided evenly among the tasks (as long as there is more than a minimum). Each worker then computes the two locations above and below the split point (final pivot location), to start swapping elements. Using the partial prefix sums computed in the first pass this can be accomplished in $O(\log c)$ time. This variant turned out to perform the best.
 \subsection{Analysis}
-The spawning of cilk tasks and the prefix sum calculations take $\log p$ time in each step, where $p$ roughly halves every time, so $O(\log p)$ overall for each processor. The partitioning of the data itself makes up $O(()n/p)\log p)$ again, plus the sort at the end with $(n/p)\log(n/p)$ which gives a $Tpar$ time of $O((n\log(n/p)/p + (n\log p)/p + \log p)$ = $\O((n\log n)/p + \log p)$, with $T_{\infty}$ = $\log p$ and a parallelism of $O((n\log n)/p)$. It should be cost optimal for $O(n) = p\log p$. 
-The total work performed is $p*\log p$ for prefix sums, $log p\log p$ for spawning the cilk tasks, $n\log p$ for partitioning the data and $p*(n/p)\log(n/p)$ sorting it. $Wpar$ is then $n\log(n/p) + n\log p + p\log p + \log^2p$ = $O(n\log n + p\log p)$ = $O(n\log n)$ for fixed $p$, which makes it work optimal.
+The spawning of cilk tasks and the prefix sum calculation take $\log p$ time in each step, where $p$ roughly halves every time, so $O(\log p)$ overall for each processor. The partitioning of the data itself makes up $O((\frac{n}{p})\log p)$ again, plus the sort at the end with $(\frac{n}{p})\log(\frac{n}{p})$ which gives a $T_{par}$ time of $O((n\log\frac{n}{p})/p + (n\log p)/p + \log p)$ = $\O((n\log n)/p + \log p)$, with $T_{\infty}$ = $\log p$ and a parallelism of $O((n\log n)/p)$. It should be cost optimal for $O(n) = p\log p$. 
+
+The total work performed by the algorithm is $p\log p$ for prefix sums, $\log^2 p$ for spawning the cilk tasks, $n\log p$ for partitioning the data and $p*(n/p)\log(n/p)$ sorting it. $W_{par}$ is then $n\log\frac{n}{p} + n\log p + p\log p + \log^2p$ = $O(n\log n + p\log p)$ = $O(n\log n)$ for fixed $p$, which makes it work optimal.
 
 \section{Test Results - Cilk, OpenMP}
 \begin{figure}[h]
@@ -121,6 +124,10 @@ The total work performed is $p*\log p$ for prefix sums, $log p\log p$ for spawni
 	\includegraphics[width=0.9\textwidth]{img/omp_cilk_speedup_10p.pdf}
 	\caption{Speedup comparison with 10 processors for various data sizes $n$.}
 \end{figure}
+\begin{figure}[h]
+	\includegraphics[width=0.9\textwidth]{img/eff_200_mil.pdf}
+	\caption{Efficiency results of the OpenMP/Cilk implementations for $n=2*10^8$.}
+\end{figure}
 
 \noindent\textbf{Runtime, Speed and Efficiency}\newline
 As expected, the runtime of the algorithm stagnates at about 10 threads due to the implementation overhead and hardware limitations on the test server. After this point, the results for the OpenMP implementation get noticeably worse than the Cilk counterparts (most evident from \emph{Figure 1}. This behavior of the OpenMP implementation does not seem to be accelerated by higher input size, however. In \emph{Figure 2}, the OpenMP implementation already performs much better for a higher number of threads. In our tests we found that for even bigger data sizes the OpenMP implementation would be almost as fast as the Cilk implementations. However, it is clear that something has gone wrong with the tests for the OpenMP program. With a low number of cores the speedup is super-linear, this comes not from any kind of superior algorithm. The partition part especially is actually an order of magnitude slower than standard Quicksort partition when executed sequentially. What we think happened is that more cores were recruited than requested, possibly in the phase after parallel partition other processes besides those involved in partitioning could pick up the generated tasks. What is evident in any case is that the program doesn't scale very well at all at higher number of processes.
@@ -131,6 +138,9 @@ The in-place variant Cilk2 is clearly superior to the other two and shows some n
 
 \noindent\textbf{Comparison - Integer and Double Input}\newline
 We have also compared the speedup of the Cilk2 and OpenMP implementations for $n=10^{8}$ for integer and double arrays. The results are shown in \emph{Figure 3}. As expected, the performance is very similar, with the OpenMP implementation being about 5\% slower when doubles are used.
+
+\FloatBarrier
+
 \section{MPI}
 \subsection{Algorithm}
 The partitioning algorithm for our MPI implementation roughly works as follows:
